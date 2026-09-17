@@ -24,7 +24,7 @@ import { getGasConstant, recordGasCalibration } from "./gasCalibration.js";
 // whitelisted-contract actions (see "Rozšíření: whitelist kontraktů" in the plan) — the server
 // already has to see those messages' plaintext to check them against the whitelist, so there's
 // no confidentiality left to lose by also being the one that encrypts them.
-const serverEncryptionUtils = new EncryptionUtilsImpl(config.lcdUrl, undefined, config.chainId);
+const serverEncryptionUtils = new EncryptionUtilsImpl(config.lcdUrl);
 
 const PAYMENT_GAS_KEY = "sscrt_payment_transfer";
 
