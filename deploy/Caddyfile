@@ -1,0 +1,9 @@
+# Caddy terminates TLS (automatic Let's Encrypt cert) and reverse-proxies to the Fastify
+# process, which stays bound to localhost only — see DEPLOY.md for the firewall setup this
+# assumes (only 80/443 reachable from the internet, 8787 not exposed at all).
+#
+# Replace provider.example.com with your real domain before use.
+
+provider.example.com {
+	reverse_proxy 127.0.0.1:8787
+}

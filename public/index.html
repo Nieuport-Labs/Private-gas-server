@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sSCRT gas provider — status</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    max-width: 720px;
+    margin: 3rem auto;
+    padding: 0 1.5rem;
+    line-height: 1.5;
+  }
+  h1 { font-size: 1.25rem; margin-bottom: 0.25rem; }
+  .address { font-family: ui-monospace, monospace; font-size: 0.85rem; opacity: 0.7; word-break: break-all; }
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1.5rem 0; }
+  .card { border: 1px solid #8884; border-radius: 12px; padding: 1rem 1.25rem; }
+  .card .label { font-size: 0.8rem; opacity: 0.65; text-transform: uppercase; letter-spacing: 0.04em; }
+  .card .value { font-size: 1.6rem; font-weight: 600; margin-top: 0.25rem; }
+  table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; }
+  td { padding: 0.4rem 0; border-bottom: 1px solid #8882; }
+  td:first-child { opacity: 0.7; }
+  td:last-child { text-align: right; font-family: ui-monospace, monospace; }
+  .stale { color: #d9822b; }
+  .err { color: #d33; }
+  footer { margin-top: 2rem; font-size: 0.8rem; opacity: 0.6; }
+</style>
+</head>
+<body>
+  <h1>sSCRT gas provider</h1>
+  <div class="address" id="provider-address">loading…</div>
+
+  <div class="cards">
+    <div class="card">
+      <div class="label">SCRT (native)</div>
+      <div class="value" id="uscrt-balance">—</div>
+    </div>
+    <div class="card">
+      <div class="label">sSCRT</div>
+      <div class="value" id="sscrt-balance">—</div>
+    </div>
+  </div>
+
+  <table>
+    <tr><td>Fee markup</td><td id="fee-markup">—</td></tr>
+    <tr><td>Auto-unwrap</td><td id="auto-unwrap-enabled">—</td></tr>
+    <tr><td>Auto-unwrap threshold</td><td id="auto-unwrap-threshold">—</td></tr>
+    <tr><td>Last auto-unwrap</td><td id="last-unwrap">—</td></tr>
+  </table>
+
+  <footer id="footer">refreshing every 10s…</footer>
+
+<script>
+  const fmtScrt = (uscrt) => (Number(uscrt) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 }) + " SCRT";
+
+  async function refresh() {
+    try {
+      const res = await fetch("/status");
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const s = await res.json();
+
+      document.getElementById("provider-address").textContent = s.providerAddress;
+      document.getElementById("uscrt-balance").textContent = fmtScrt(s.balances.uscrt);
+      document.getElementById("sscrt-balance").textContent = fmtScrt(s.balances.sscrt);
+      document.getElementById("fee-markup").textContent = s.config.feeMarkupPercent + "%";
+      document.getElementById("auto-unwrap-enabled").textContent = s.config.autoUnwrap.enabled ? "enabled" : "disabled";
+      document.getElementById("auto-unwrap-threshold").textContent = fmtScrt(s.config.autoUnwrap.thresholdUscrt);
+      document.getElementById("last-unwrap").textContent = s.lastAutoUnwrap
+        ? `${fmtScrt(s.lastAutoUnwrap.sscrtBalanceBefore)} → SCRT at ${new Date(s.lastAutoUnwrap.triggeredAt).toLocaleString()} (code ${s.lastAutoUnwrap.code})`
+        : "never";
+
+      document.getElementById("footer").textContent = "last updated " + new Date().toLocaleTimeString();
+      document.getElementById("footer").className = "";
+    } catch (err) {
+      document.getElementById("footer").textContent = "failed to load /status: " + err.message;
+      document.getElementById("footer").className = "err";
+    }
+  }
+
+  refresh();
+  setInterval(refresh, 10_000);
+</script>
+</body>
+</html>

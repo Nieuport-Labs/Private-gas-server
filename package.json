@@ -1,0 +1,36 @@
+{
+  "name": "sscrt-gas-provider",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p .",
+    "start": "node dist/index.js",
+    "smoke:permit": "tsx src/scripts/smoke-permit.ts",
+    "smoke:onboard": "tsx src/scripts/smoke-onboard.ts",
+    "smoke:simulate": "tsx src/scripts/smoke-simulate.ts",
+    "calibrate:payment": "tsx src/scripts/calibrate-payment-gas.ts",
+    "smoke:quote": "tsx src/scripts/smoke-quote.ts",
+    "smoke:submit": "tsx src/scripts/smoke-submit.ts",
+    "smoke:sequence-lock": "tsx src/scripts/smoke-sequence-lock.ts",
+    "smoke:delegate": "tsx src/scripts/smoke-delegate.ts",
+    "smoke:vote": "tsx src/scripts/smoke-vote.ts",
+    "smoke:resim-guard": "tsx src/scripts/smoke-resim-guard.ts",
+    "smoke:http": "tsx src/scripts/smoke-http.ts",
+    "smoke:status": "tsx src/scripts/smoke-status.ts",
+    "calibrate:contract": "tsx src/scripts/calibrate-contract-gas.ts",
+    "smoke:contract-whitelist": "tsx src/scripts/smoke-contract-whitelist.ts"
+  },
+  "dependencies": {
+    "secretjs": "1.18.0-beta.0",
+    "better-sqlite3": "^11.3.0",
+    "fastify": "^4.28.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^20.14.10",
+    "tsx": "^4.16.2",
+    "typescript": "^5.5.4"
+  }
+}
