@@ -111,10 +111,22 @@ copy-paste:
   exactly the kind of number that drifts and quietly breaks things if left stale.
 - **`LCD_URL` / `RPC_URL`** — a public endpoint to start, with a plan to move to a dedicated/paid
   endpoint or your own node once traffic justifies it (a free public endpoint can rate-limit you,
-  and this server's reliability depends entirely on its RPC endpoint being up). Public options as
-  of this check: `https://secretnetwork-api.lavenderfive.com:443` (LCD),
-  `https://secretnetwork-rpc.lavenderfive.com:443` (RPC), or others listed at
-  https://github.com/scrtlabs/api-registry — pick one, and note a second as fallback.
+  and this server's reliability depends entirely on its RPC endpoint being up). Verified working
+  2026-09-17: `https://secretnetwork-api.lavenderfive.com:443` (LCD),
+  `https://secretnetwork-rpc.lavenderfive.com:443` (RPC).
+
+  Before trusting any other endpoint, check that it serves the enclave IO key, which `secretjs`
+  needs for *every* encrypted contract query (balances via permit, whitelisted contract calls):
+
+  ```bash
+  curl "$LCD_URL/registration/v1beta1/tx-key"   # expect {"key":"..."}
+  ```
+
+  That exact path is the one `secretjs` calls. Don't test `/reg/consensus-io-exchange-pubkey` —
+  it is a legacy path that returns `501 Not Implemented` on endpoints that are otherwise perfectly
+  fine, which is actively misleading. Also don't trust the Cosmos chain-registry's list blindly:
+  its Secret Saturn entries (`lcd.mainnet.secretsaturn.net`) were already dead (NXDOMAIN) when
+  checked on 2026-09-17.
 - **`SSCRT_CONTRACT`** — `secret1k0jntykt7e4g3y88ltc60czgjuqdy4c9e8fzek`, verified live on mainnet
   as of 2026-09-17 (label `sscrt`, code_id `2280`). The contract's *code hash* is never hardcoded
   anywhere in this codebase — `chain.ts`'s `getSscrtCodeHash()` resolves it fresh from the chain
