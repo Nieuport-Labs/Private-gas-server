@@ -19,6 +19,13 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY public ./public
 
+# src/ and tsconfig.json are kept alongside the compiled dist/ (not just for building) so the
+# calibrate:*/smoke:* scripts — meant to be run ad hoc via `docker exec` against a live
+# deployment, not part of the request-serving path — work with `npm run <script>` as documented
+# in DEPLOY.md, without needing a separate dev image.
+COPY tsconfig.json ./
+COPY src ./src
+
 # Runs as the default node image's built-in "node" user, not root.
 RUN mkdir -p /data && chown node:node /data
 USER node
