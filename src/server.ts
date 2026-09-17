@@ -19,7 +19,7 @@ import { getSettings, updateSettings, SettingsError } from "./settings.js";
 import { login, logout, logoutAll, issueSession, isValidSession, tokenFromHeader, sweepSessions } from "./auth.js";
 import { isSetUp, setup, changePassword, PasswordTooShortError } from "./secretStore.js";
 import { wrapScrt, calibratePaymentGas } from "./maintenance.js";
-import { startJob, getJob, JobInProgressError } from "./jobs.js";
+import { startJob, getJob, isJobRunning, JobInProgressError } from "./jobs.js";
 import { getGasConstant } from "./gasCalibration.js";
 import { onboardUser } from "./onboarding.js";
 import { requestQuote, QuoteError } from "./quote.js";
@@ -160,7 +160,10 @@ export function buildServer() {
     return reply.send({
       ...publicPart,
       authenticated: true,
-      balances: walletConfigured ? await getProviderBalancesCached() : null,
+      // While a maintenance job runs, the dashboard polls every 2s and the job is competing for
+      // the same endpoint's rate limit — the balances shown beside a running job are not worth a
+      // chain query, so serve whatever was last read and let the job have the budget.
+      balances: walletConfigured ? await getProviderBalancesCached(isJobRunning() ? Infinity : undefined) : null,
       settings,
       paymentGasConstant,
       job: getJob(),

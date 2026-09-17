@@ -34,8 +34,10 @@ function optionalPassword(): string {
 
 export const config = {
   chainId: process.env.CHAIN_ID ?? "secretdev-1",
+  // The only chain endpoint this server uses. secretjs talks to the LCD/gRPC-gateway and nothing
+  // else, so there is no separate RPC setting — an RPC_URL, if you have one in an old .env, is
+  // ignored.
   lcdUrl: process.env.LCD_URL ?? "http://localhost:1317",
-  rpcUrl: process.env.RPC_URL ?? "http://localhost:26657",
 
   // The provider's own signing account. Only ever used for: (a) MsgGrantAllowance /
   // MsgRevokeAllowance (grant lifecycle), never for signing a user's action+payment bundle

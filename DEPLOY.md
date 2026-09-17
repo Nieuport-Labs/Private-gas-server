@@ -107,24 +107,39 @@ copy-paste:
   materially changing what users pay. **Verify current guidance** (the Cosmos chain registry, or
   Secret Network's Discord/validator channels) before launch, and re-check periodically — this is
   exactly the kind of number that drifts and quietly breaks things if left stale.
-- **`LCD_URL` / `RPC_URL`** — a public endpoint to start, with a plan to move to a dedicated/paid
-  endpoint or your own node once traffic justifies it (a free public endpoint can rate-limit you,
-  and this server's reliability depends entirely on its RPC endpoint being up). Verified working
-  2026-09-17: `https://secretnetwork-api.lavenderfive.com:443` (LCD),
-  `https://secretnetwork-rpc.lavenderfive.com:443` (RPC).
+- **`LCD_URL`** — use a **Secret-specific** host. This is the single most important reliability
+  choice in the whole deployment, and getting it wrong is what cost the most time here: generic
+  multi-chain Cosmos providers either do not implement Secret's compute and registration
+  endpoints at all, or rate-limit hard enough to break a calibration run — and they signal it by
+  serving "429 Too Many Requests" as an *HTML page*, which reaches the client as a baffling JSON
+  parse error rather than anything resembling a rate limit.
 
-  Before trusting any other endpoint, check that it serves the enclave IO key, which `secretjs`
-  needs for *every* encrypted contract query (balances via permit, whitelisted contract calls):
+  Verified 2026-09-17, each handling 30 rapid requests without a single failure:
+
+  ```
+  https://lcd.secret.mainnet.secret3.dev        (the default)
+  https://lcd.secret.tactus.starshell.net
+  https://secret-rest-sl.norm.io
+  https://api.secretnetwork.pathrocknetwork.org
+  ```
+
+  Current directory: https://secretnodes.com/secret-4/endpoints
+
+  Before trusting any other endpoint, check it serves the enclave IO key, which `secretjs` needs
+  for *every* encrypted contract query (balances via permit, whitelisted contract calls):
 
   ```bash
   curl "$LCD_URL/registration/v1beta1/tx-key"   # expect {"key":"..."}
   ```
 
   That exact path is the one `secretjs` calls. Don't test `/reg/consensus-io-exchange-pubkey` —
-  it is a legacy path that returns `501 Not Implemented` on endpoints that are otherwise perfectly
-  fine, which is actively misleading. Also don't trust the Cosmos chain-registry's list blindly:
-  its Secret Saturn entries (`lcd.mainnet.secretsaturn.net`) were already dead (NXDOMAIN) when
-  checked on 2026-09-17.
+  it is a legacy path that returns `501 Not Implemented` on endpoints that work perfectly, which
+  is actively misleading. Also don't trust the Cosmos chain-registry's list blindly: its Secret
+  Saturn entries (`lcd.mainnet.secretsaturn.net`) were dead (NXDOMAIN) when checked, and its
+  Lavender.Five entries rate-limit aggressively.
+
+  There is **no RPC setting** — secretjs uses the LCD only. An `RPC_URL` left over in an old
+  `.env` is ignored.
 - **`SSCRT_CONTRACT`** — `secret1k0jntykt7e4g3y88ltc60czgjuqdy4c9e8fzek`, verified live on mainnet
   as of 2026-09-17 (label `sscrt`, code_id `2280`). The contract's *code hash* is never hardcoded
   anywhere in this codebase — `chain.ts`'s `getSscrtCodeHash()` resolves it fresh from the chain

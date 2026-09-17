@@ -24,6 +24,8 @@ const MIN_SUCCESSFUL_SAMPLES = 3;
 // transaction, so this is not a retried broadcast, just a fresh one.
 const SAMPLE_ATTEMPTS = 3;
 
+const SAMPLE_SPACING_MS = 2000;
+
 export type Progress = (message: string) => void;
 
 /**
@@ -98,6 +100,11 @@ export async function calibratePaymentGas(sampleCount: number, onProgress: Progr
   const failures: unknown[] = [];
 
   for (let i = 0; i < sampleCount; i++) {
+    // Pace the run. Each sample costs several requests (sequence lookup, broadcast, result poll),
+    // and firing them back to back is what tips a public endpoint into rate limiting — which then
+    // fails the samples that follow. Blocks take ~6s anyway, so this barely lengthens the run.
+    if (i > 0) await new Promise((r) => setTimeout(r, SAMPLE_SPACING_MS));
+
     // The amount varies per sample so the message isn't byte-identical across runs, matching how
     // it is really used (a different quoted fee each time).
     for (let attempt = 0; attempt < SAMPLE_ATTEMPTS; attempt++) {

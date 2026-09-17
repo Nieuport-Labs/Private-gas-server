@@ -99,8 +99,11 @@ export async function getProviderBalances(): Promise<{ uscrt: string; sscrt: str
 let balanceCache: { at: number; value: { uscrt: string; sscrt: string } } | null = null;
 const BALANCE_CACHE_MS = 10_000;
 
-export async function getProviderBalancesCached(): Promise<{ uscrt: string; sscrt: string }> {
-  if (balanceCache && Date.now() - balanceCache.at < BALANCE_CACHE_MS) return balanceCache.value;
+export async function getProviderBalancesCached(maxAgeMs = BALANCE_CACHE_MS): Promise<{ uscrt: string; sscrt: string } | null> {
+  if (balanceCache && Date.now() - balanceCache.at < maxAgeMs) return balanceCache.value;
+  // With no usable cached value and staleness allowed (a job is running), report nothing rather
+  // than compete with the job for the endpoint's rate limit.
+  if (maxAgeMs === Infinity) return balanceCache?.value ?? null;
   const value = await getProviderBalances();
   balanceCache = { at: Date.now(), value };
   return value;
