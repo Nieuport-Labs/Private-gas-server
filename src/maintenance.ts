@@ -33,10 +33,20 @@ export type Progress = (message: string) => void;
  * which sent the operator hunting for a better provider when the real problem was an unfunded
  * wallet — the failures said "account not found" the whole time.
  */
-function explainFailure(succeeded: number, attempted: number, required: number, failures: unknown[]): string {
+function explainFailure(succeeded: number, attempted: number, required: number, failures: unknown[], gasLimit: number): string {
   const head = `only ${succeeded}/${attempted} samples succeeded, need at least ${required} — nothing recorded.`;
   const last = failures[failures.length - 1] as Error | undefined;
   if (!last) return head;
+
+  // The chain states the fee it wanted, so the fix can be an exact number rather than advice to
+  // go and research one. Nodes enforce their own minimum gas price, so this is configuration
+  // catching up with reality, not a bug.
+  const needed = /required: (\d+)uscrt/.exec(last.message);
+  if (needed) {
+    const impliedPrice = Number(needed[1]) / gasLimit;
+    return `${head} The node rejected every transaction for paying too little gas: it wants ${needed[1]}uscrt for ${gasLimit} gas, i.e. a price of ${impliedPrice}. Set NATIVE_GAS_PRICE_USCRT to at least ${impliedPrice} and run this again. (Currently ${config.nativeGasPriceUscrt}.)`;
+  }
+
   if (failures.every((f) => isTransient(f))) {
     return `${head} Every sample failed on the RPC endpoint (${last.message}). It is rate limiting or down — wait and retry, or point LCD_URL at a different one.`;
   }
@@ -134,7 +144,7 @@ export async function calibratePaymentGas(sampleCount: number, onProgress: Progr
 
   const required = Math.min(MIN_SUCCESSFUL_SAMPLES, sampleCount);
   if (samples.length < required) {
-    throw new Error(explainFailure(samples.length, sampleCount, required, failures));
+    throw new Error(explainFailure(samples.length, sampleCount, required, failures, 200_000));
   }
 
   const constant = recordPaymentGasCalibration(samples);
@@ -191,7 +201,7 @@ export async function calibrateContractGas(
 
   const requiredC = Math.min(MIN_SUCCESSFUL_SAMPLES, sampleCount);
   if (samples.length < requiredC) {
-    throw new Error(explainFailure(samples.length, sampleCount, requiredC, failures));
+    throw new Error(explainFailure(samples.length, sampleCount, requiredC, failures, 400_000));
   }
 
   const constant = recordGasCalibration(contractAddress, samples);

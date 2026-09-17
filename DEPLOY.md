@@ -100,13 +100,18 @@ copy-paste:
   seed sits in plaintext in whatever holds your environment variables, which is what the
   dashboard flow exists to avoid.
 
-- **`NATIVE_GAS_PRICE_USCRT`** — this is the one that actually needs research before you commit to
-  it, not a number to guess. Mainnet validators each set their own `min_gas_price`; there is no
-  single official value. `0.0125uscrt` is described as the tier supported by 40%+ of validators as
-  of the last check — doubling it (`0.025`) buys headroom against inclusion failures without
-  materially changing what users pay. **Verify current guidance** (the Cosmos chain registry, or
-  Secret Network's Discord/validator channels) before launch, and re-check periodically — this is
-  exactly the kind of number that drifts and quietly breaks things if left stale.
+- **`NATIVE_GAS_PRICE_USCRT`** — `0.1`. This is both what the server pays for gas and the basis
+  for what it charges users, so it is worth understanding rather than copying.
+
+  The Cosmos chain registry gives `secret-4` a minimum of `0.05` and an average of `0.1` uscrt.
+  On top of that, each node enforces its own minimum: `lcd.secret.mainnet.secret3.dev` rejects
+  anything below `0.1` with `insufficient fees; got: 5000uscrt required: 20000uscrt`.
+
+  A value below the network minimum is the nastiest kind of wrong, because it does not fail
+  consistently — a lax node will accept and relay it while a strict one refuses, so it works in
+  testing and breaks later. If calibration fails on fees, the error now states the exact price
+  the node demanded; use that.
+
 - **`LCD_URL`** — use a **Secret-specific** host. This is the single most important reliability
   choice in the whole deployment, and getting it wrong is what cost the most time here: generic
   multi-chain Cosmos providers either do not implement Secret's compute and registration
