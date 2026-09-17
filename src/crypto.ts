@@ -18,6 +18,34 @@ function deriveKey(password: string, salt: Buffer): Buffer {
   return scryptSync(password, salt, KEY_LEN, SCRYPT_PARAMS);
 }
 
+export function randomKey(): Buffer {
+  return randomBytes(KEY_LEN);
+}
+
+/**
+ * AES-256-GCM under a key that is already a key, with no derivation step. Used for the seed
+ * itself, which is encrypted under the random data key rather than under the password — that
+ * indirection is what lets the password change without re-encrypting (or losing) the seed.
+ */
+export function encryptWithKey(plaintext: string, key: Buffer): string {
+  const iv = randomBytes(IV_LEN);
+  const cipher = createCipheriv("aes-256-gcm", key, iv);
+  const ciphertext = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  return [iv.toString("base64"), cipher.getAuthTag().toString("base64"), ciphertext.toString("base64")].join(".");
+}
+
+export function decryptWithKey(blob: string, key: Buffer): string {
+  const [ivB64, tagB64, ciphertextB64] = blob.split(".");
+  if (!ivB64 || !tagB64 || !ciphertextB64) throw new Error("malformed encrypted blob");
+  const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(ivB64, "base64"));
+  decipher.setAuthTag(Buffer.from(tagB64, "base64"));
+  try {
+    return Buffer.concat([decipher.update(Buffer.from(ciphertextB64, "base64")), decipher.final()]).toString("utf8");
+  } catch {
+    throw new Error("could not decrypt (wrong key or corrupted data)");
+  }
+}
+
 /**
  * Encrypts with AES-256-GCM under a key derived from `password`. The salt and IV are random per
  * call and stored alongside the ciphertext, so the same secret encrypted twice never produces

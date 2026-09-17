@@ -5,15 +5,13 @@
 // environment (visible to `docker inspect`, to the compose file, to anything that can read the
 // process). Here it lives encrypted in the database and is decrypted into memory at boot.
 //
-// What this does and does not buy, stated honestly: the seed is no longer in the environment or
-// in any config file, and a stolen copy of the database is useless on its own. But because the
-// server must come back up unattended after a restart, the password that decrypts it comes from
-// ADMIN_PASSWORD — so anyone who can read *both* the environment and the database still gets the
-// seed. This is defence in depth and much better key hygiene, not a vault.
+// The key protecting it lives in secretStore.ts — see there for exactly what this protects
+// against and what it does not.
 import { Wallet, SecretNetworkClient } from "secretjs";
 import { db } from "./db.js";
 import { config } from "./config.js";
-import { encryptWithPassword, decryptWithPassword } from "./crypto.js";
+import { encryptWithKey, decryptWithKey } from "./crypto.js";
+import { getDataKey, isUnlocked } from "./secretStore.js";
 
 const MNEMONIC_KEY = "provider_mnemonic";
 
@@ -25,14 +23,14 @@ let initAttempted = false;
 function readStoredMnemonic(): string | null {
   const row = db.prepare(`SELECT value FROM secrets WHERE key = ?`).get(MNEMONIC_KEY) as { value: string } | undefined;
   if (!row) return null;
-  return decryptWithPassword(row.value, config.adminPassword);
+  return decryptWithKey(row.value, getDataKey());
 }
 
 function writeStoredMnemonic(mnemonic: string): void {
   db.prepare(
     `INSERT INTO secrets (key, value, updated_at) VALUES (?, ?, datetime('now'))
      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-  ).run(MNEMONIC_KEY, encryptWithPassword(mnemonic, config.adminPassword));
+  ).run(MNEMONIC_KEY, encryptWithKey(mnemonic, getDataKey()));
 }
 
 function build(mnemonic: string): LoadedWallet {
@@ -58,7 +56,11 @@ function build(mnemonic: string): LoadedWallet {
  * generated from the dashboard.
  */
 export function initWallet(): void {
+  // Nothing is readable while the store is locked. Deliberately does not mark the attempt as
+  // done, so the next call retries — that is what makes the wallet appear right after an unlock.
+  if (!isUnlocked()) return;
   initAttempted = true;
+
   const stored = readStoredMnemonic();
   if (stored) {
     loaded = build(stored);

@@ -52,6 +52,27 @@
   <h1>sSCRT gas provider</h1>
   <div class="address" id="provider-address">loading…</div>
 
+  <!-- First-run setup -->
+  <section id="setup-section" class="hidden">
+    <h2>First-run setup</h2>
+    <p class="muted">
+      Choose an admin password. It protects this dashboard and unlocks the provider's seed.
+      Store it in a password manager — there is no reset.
+    </p>
+    <div class="field">
+      <label for="setup-password">New admin password (12+ characters)</label>
+      <input type="password" id="setup-password" autocomplete="new-password" />
+    </div>
+    <div class="field">
+      <label for="setup-password-2">Repeat password</label>
+      <input type="password" id="setup-password-2" autocomplete="new-password" />
+    </div>
+    <div class="row">
+      <button class="primary" id="setup-btn">Set password</button>
+      <span id="setup-error" class="err"></span>
+    </div>
+  </section>
+
   <!-- Login -->
   <section id="login-section" class="hidden">
     <h2>Sign in</h2>
@@ -148,6 +169,21 @@
       <span id="settings-msg"></span>
     </div>
 
+    <h2>Change password</h2>
+    <div class="field">
+      <label for="current-password">Current password</label>
+      <input type="password" id="current-password" autocomplete="current-password" />
+    </div>
+    <div class="field">
+      <label for="new-password">New password (12+ characters)</label>
+      <input type="password" id="new-password" autocomplete="new-password" />
+    </div>
+    <div class="row">
+      <button id="change-password-btn">Change password</button>
+      <span id="password-msg"></span>
+    </div>
+    <p class="muted">The seed is re-protected under the new password; the wallet itself is unaffected.</p>
+
     <h2></h2>
     <button id="logout-btn">Sign out</button>
   </section>
@@ -187,6 +223,39 @@
   }
 
   // --- auth ---
+  $("setup-btn").onclick = async () => {
+    $("setup-error").textContent = "";
+    const p1 = $("setup-password").value, p2 = $("setup-password-2").value;
+    if (p1 !== p2) { $("setup-error").textContent = "passwords do not match"; return; }
+    try {
+      const { token: t } = await api("/admin/setup", { password: p1 });
+      setToken(t);
+      $("setup-password").value = $("setup-password-2").value = "";
+      await refresh();
+    } catch (err) {
+      $("setup-error").textContent = err.message;
+    }
+  };
+
+  $("change-password-btn").onclick = async () => {
+    const msg = $("password-msg");
+    msg.textContent = ""; msg.className = "";
+    try {
+      await api("/admin/password", {
+        currentPassword: $("current-password").value,
+        newPassword: $("new-password").value,
+      });
+      $("current-password").value = $("new-password").value = "";
+      msg.textContent = "changed — sign in again";
+      msg.className = "ok";
+      setToken(null);
+      setTimeout(refresh, 1200);
+    } catch (err) {
+      msg.textContent = err.message;
+      msg.className = "err";
+    }
+  };
+
   $("login-btn").onclick = async () => {
     $("login-error").textContent = "";
     try {
@@ -283,6 +352,15 @@
       const data = await res.json();
 
       $("provider-address").textContent = data.providerAddress || "no wallet configured";
+
+      if (data.setupRequired) {
+        $("setup-section").classList.remove("hidden");
+        $("login-section").classList.add("hidden");
+        $("admin-section").classList.add("hidden");
+        $("footer").textContent = "waiting for first-run setup";
+        return;
+      }
+      $("setup-section").classList.add("hidden");
 
       if (!data.authenticated) {
         // A token that the server no longer accepts (restart, expiry) should not look like a bug.

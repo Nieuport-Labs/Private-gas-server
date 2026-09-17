@@ -19,14 +19,12 @@ function envOrUndefined(name: string): string | undefined {
 
 const MIN_ADMIN_PASSWORD_LENGTH = 12;
 
-function requireStrongPasswordInProd(): string {
-  const supplied = process.env.ADMIN_PASSWORD ?? "";
-  if (process.env.NODE_ENV !== "production") return supplied || "devnet-admin";
-
+function optionalPassword(): string {
+  const supplied = envOrUndefined("ADMIN_PASSWORD");
   if (!supplied) {
-    throw new Error(
-      "ADMIN_PASSWORD is required in production — it protects the dashboard and encrypts the provider's seed. Set it to a long random passphrase.",
-    );
+    // Dev/devnet still bootstraps itself so local work needs no setup step; production starts
+    // unconfigured and waits for the dashboard.
+    return process.env.NODE_ENV === "production" ? "" : "devnet-admin-password";
   }
   if (supplied.length < MIN_ADMIN_PASSWORD_LENGTH) {
     throw new Error(`ADMIN_PASSWORD must be at least ${MIN_ADMIN_PASSWORD_LENGTH} characters`);
@@ -56,14 +54,11 @@ export const config = {
         // outside a throwaway LocalSecret instance.
         "grant rice replace explain federal release fix clever romance raise often wild taxi quarter soccer fiber love must tape steak together observe swap guitar"),
 
-  // Gates the dashboard and every admin action, and derives the key that encrypts the mnemonic
-  // at rest. Required in production: without it there is nothing protecting a UI that can move
-  // the provider's funds. Dev gets a fixed obvious placeholder so local work needs no setup.
-  //
-  // Refusing to start beats starting insecurely here. An unset-but-present env var (`FOO=` in a
-  // compose file, which is an empty string rather than undefined) is the likely mistake, and it
-  // would otherwise mean an empty password that logs anyone in.
-  adminPassword: requireStrongPasswordInProd(),
+  // Optional. The admin password is normally set through first-run setup in the dashboard, which
+  // keeps it out of container config entirely; this is only a headless bootstrap for CI, the
+  // devnet and automated rebuilds (see bootstrap.ts), and is ignored once setup has happened.
+  // Empty string counts as absent — `FOO=` in a compose file is a blank, not a password.
+  adminPassword: optionalPassword(),
 
   adminSessionTtlSeconds: Number(process.env.ADMIN_SESSION_TTL_SECONDS ?? 60 * 60 * 12),
 

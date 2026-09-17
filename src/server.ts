@@ -16,7 +16,8 @@ import {
   WalletNotConfiguredError,
 } from "./wallet.js";
 import { getSettings, updateSettings, SettingsError } from "./settings.js";
-import { login, logout, isValidSession, tokenFromHeader, sweepSessions } from "./auth.js";
+import { login, logout, logoutAll, issueSession, isValidSession, tokenFromHeader, sweepSessions } from "./auth.js";
+import { isSetUp, setup, changePassword, PasswordTooShortError } from "./secretStore.js";
 import { onboardUser } from "./onboarding.js";
 import { requestQuote, QuoteError } from "./quote.js";
 import { submitQuote, SubmitError } from "./submit.js";
@@ -94,6 +95,9 @@ export function buildServer() {
   // Rejects every /admin/* request without a valid session, before any handler runs.
   app.addHook("onRequest", async (req, reply) => {
     if (!req.url.startsWith("/admin") || req.url === "/admin/login") return;
+    // First-run setup is the one admin route that cannot require a session — there is no password
+    // to authenticate against yet. It closes permanently the moment one exists.
+    if (req.url === "/admin/setup" && !isSetUp()) return;
     if (!isValidSession(tokenFromHeader(req.headers.authorization))) {
       return reply.status(401).send({ error: "unauthorized", message: "log in first" });
     }
@@ -119,6 +123,7 @@ export function buildServer() {
     const settings = getSettings();
     const walletConfigured = isWalletConfigured();
     const publicPart = {
+      setupRequired: !isSetUp(),
       providerAddress: walletConfigured ? getProviderAddress() : null,
       walletConfigured,
       chainId: config.chainId,
@@ -149,6 +154,43 @@ export function buildServer() {
         triggeredAt: lastAutoUnwrap.triggered_at,
       },
     });
+  });
+
+  app.post<{ Body: { password: string } }>("/admin/setup", async (req, reply) => {
+    if (isSetUp()) {
+      return reply.status(409).send({ error: "already_set_up", message: "an admin password is already set" });
+    }
+    if (!ipLimiter.allow(req.ip)) {
+      return reply.status(429).send({ error: "rate_limited", message: "too many attempts, wait a minute" });
+    }
+    try {
+      setup(req.body?.password ?? "");
+    } catch (err) {
+      if (err instanceof PasswordTooShortError) {
+        return reply.status(400).send({ error: err.code, message: err.message });
+      }
+      throw err;
+    }
+    // Signed in immediately — making the operator retype the password they just chose adds
+    // nothing, and setup already proves they control the instance.
+    return reply.send({ token: issueSession(), expiresInSeconds: config.adminSessionTtlSeconds });
+  });
+
+  app.post<{ Body: { currentPassword: string; newPassword: string } }>("/admin/password", async (req, reply) => {
+    const { currentPassword, newPassword } = req.body ?? ({} as any);
+    if (!currentPassword || !newPassword) {
+      return reply.status(400).send({ error: "bad_request", message: "currentPassword and newPassword are required" });
+    }
+    try {
+      changePassword(currentPassword, newPassword);
+    } catch (err) {
+      if (err instanceof PasswordTooShortError) {
+        return reply.status(400).send({ error: err.code, message: err.message });
+      }
+      return reply.status(400).send({ error: "password_change_failed", message: (err as Error).message });
+    }
+    logoutAll(); // old tokens must not outlive the password that created them
+    return reply.send({ ok: true });
   });
 
   app.post<{ Body: { password: string } }>("/admin/login", async (req, reply) => {

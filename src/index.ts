@@ -2,15 +2,21 @@ import { buildServer } from "./server.js";
 import { config } from "./config.js";
 import { startAutoUnwrapJob } from "./autoUnwrap.js";
 import { initWallet, isWalletConfigured } from "./wallet.js";
+import { isSetUp, unlockWithKeyfile, setup } from "./secretStore.js";
+import { bootstrapFromEnv } from "./bootstrap.js";
 
-// Decrypts the stored provider key into memory (or adopts one from PROVIDER_MNEMONIC on first
-// boot). Deliberately does not throw when there is no wallet yet: a fresh deployment is expected
-// to start empty and have one generated from the dashboard.
+bootstrapFromEnv({ isSetUp, setup });
+
+// Unlocks the seed from the keyfile next to the database, so a restart resumes sponsoring with
+// nobody present. Failure here is not fatal: the operator can still unlock by signing in.
+unlockWithKeyfile();
 initWallet();
 
 const app = buildServer();
 
-if (!isWalletConfigured()) {
+if (!isSetUp()) {
+  app.log.warn("first-run setup pending — open the dashboard to set an admin password");
+} else if (!isWalletConfigured()) {
   app.log.warn("no provider wallet configured — open the dashboard to generate or import one");
 }
 

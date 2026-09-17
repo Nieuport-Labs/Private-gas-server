@@ -90,10 +90,10 @@ chmod 600 .env
 Fill in every field — several have **no safe default** and need a deliberate decision, not a
 copy-paste:
 
-- **`ADMIN_PASSWORD`** — required. It gates the dashboard and every admin action, and derives
-  the key that encrypts the provider's mnemonic at rest. Use a long random passphrase from a
-  password manager. Note that changing it later makes an already-stored mnemonic undecryptable,
-  so re-import the wallet if you rotate it.
+- **`ADMIN_PASSWORD`** — leave this **empty**. You set the admin password in the browser the
+  first time you open the dashboard (step 6), so it never has to live in your container config.
+  Setting it here is only a headless bootstrap for CI and the devnet, and is ignored once setup
+  has happened.
 - **`PROVIDER_MNEMONIC`** — leave this **empty**. The wallet is created from the dashboard after
   the server is up (step 6), which keeps the seed out of your container config entirely. Setting
   it here still works — it gets adopted into the encrypted store on first boot — but then the
@@ -199,20 +199,28 @@ sudo systemctl is-enabled docker   # should already be "enabled" on ZimaOS
 
 ## 6. Create the provider wallet, then fund it
 
-Open the dashboard and sign in with `ADMIN_PASSWORD`. Until a wallet exists the server answers
-`/onboard`, `/quote` and `/submit` with `503 wallet_not_configured` — it runs, but sponsors
-nothing.
+Open the dashboard. On a fresh install it shows **first-run setup**: choose an admin password
+(12+ characters, from a password manager — there is no reset) and you are signed straight in.
+That password gates the dashboard and protects the seed; you can change it later from the
+dashboard without touching the wallet.
+
+Until a wallet exists the server answers `/onboard`, `/quote` and `/submit` with
+`503 wallet_not_configured` — it runs, but sponsors nothing.
 
 **Generate new wallet** creates one and shows you the seed phrase **once**. Write it down on
 paper or into a password manager before dismissing it: there is no endpoint that reads it back,
 by design. **Import from seed phrase** takes an existing wallet instead.
 
-The seed is stored encrypted (AES-256-GCM, key derived from `ADMIN_PASSWORD` via scrypt), so a
-copy of the database file alone does not yield it, and the server decrypts it automatically on
-restart with no manual unlock. Be clear about the limit of that, though: the password lives in
-the container's environment so the server can restart unattended, so anyone who can read *both*
-the environment and the database can still recover the seed. It is better key hygiene than a
-plaintext env var, not a hardware wallet.
+The seed is encrypted (AES-256-GCM) under a random data key, and that data key is kept two ways:
+wrapped with your password in the database, and as `.unlock.key` (mode 0600) in the data
+directory. The keyfile is what lets the server unlock itself after a reboot or an update with
+nobody present; the password is the recovery path if that file is ever lost.
+
+The limit of this, stated plainly: a copy of the **database alone** — a backup, a stolen
+snapshot — cannot yield the seed, but whoever holds the **whole data directory** can decrypt it,
+because that is exactly what the server does at boot. Unattended restart and "nothing on disk can
+decrypt this" cannot both be true. Back up `provider.sqlite3`, and treat the data directory
+itself as secret.
 
 Then send real SCRT to the address the dashboard shows, **using your own wallet** — this
 assistant will not execute a transfer on your behalf. Size the initial amount for: (a) enough
