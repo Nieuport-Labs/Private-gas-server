@@ -7,25 +7,17 @@
 // under-quote produces real out-of-gas failures in production, not just an inaccurate quote.
 //
 // Usage: tsx src/scripts/calibrate-payment-gas.ts [sampleCount]
-import { Wallet, SecretNetworkClient } from "secretjs";
 import { buildPaymentMessage, recordPaymentGasCalibration } from "../payment.js";
-import { getSscrtCodeHash, providerAddress } from "../chain.js";
+import { getSscrtCodeHash, providerAddress, providerClient } from "../chain.js";
 import { config } from "../config.js";
-
-// Genesis key "a" — has both native SCRT (pays its own gas here, no feegrant needed for a
-// maintenance/calibration run) and plenty of wrapped sSCRT from the devnet setup.
-const CALIBRATION_MNEMONIC =
-  "grant rice replace explain federal release fix clever romance raise often wild taxi quarter soccer fiber love must tape steak together observe swap guitar";
 
 async function main() {
   const n = Number(process.argv[2] ?? 10);
-  const wallet = new Wallet(CALIBRATION_MNEMONIC);
-  const client = new SecretNetworkClient({
-    url: config.lcdUrl,
-    chainId: config.chainId,
-    wallet,
-    walletAddress: wallet.address,
-  });
+  // Measured from the provider's own wallet: it is the one account guaranteed to hold both the
+  // native SCRT to pay for these samples and the sSCRT to move in them, on any deployment. The
+  // samples are self-transfers (provider -> provider), which the SNIP-20 contract charges the
+  // same way as a user's payment — same message shape, same balance writes, same history entry.
+  const client = providerClient;
 
   const codeHash = await getSscrtCodeHash();
   const samples: number[] = [];
@@ -34,7 +26,7 @@ async function main() {
     // Amount varies slightly (1 + i) so the message isn't byte-identical across samples —
     // matches how it'll actually be used (a real quoted fee amount each time), and avoids
     // measuring a mempool/cache artifact instead of real execution cost.
-    const msg = buildPaymentMessage(wallet.address, String(1000 + i), codeHash);
+    const msg = buildPaymentMessage(providerAddress, String(1000 + i), codeHash);
     const tx = await client.tx.broadcast([msg], { gasLimit: 200_000, gasPriceInFeeDenom: config.nativeGasPriceUscrt });
     if (tx.code !== 0) {
       console.error(`sample ${i} failed (code ${tx.code}): ${tx.rawLog}`);

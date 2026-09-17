@@ -54,7 +54,7 @@ curl http://localhost:8787/status
 
 Open `http://localhost:8787/` in a browser — the dashboard should show the provider address and
 (once funded, step 6) its balances. Run the existing smoke scripts against this local container
-before moving on (see step 8) — cheaper to catch problems here than after exposing it.
+before moving on (see step 9) — cheaper to catch problems here than after exposing it.
 
 ## 2. Move the container to ZimaOS
 
@@ -207,27 +207,43 @@ grants for your expected early traffic, and (b) the plan's hot/cold split — ke
 operational reserve here (days to weeks of expected spend), with the bulk held separately and
 topped up periodically, not the whole treasury sitting on this server's key.
 
-## 7. Calibrate gas — against mainnet, not devnet
+## 7. Wrap a little SCRT into sSCRT
+
+Calibration (step 8) measures a real sSCRT transfer, so the provider needs some sSCRT to move.
+A fresh wallet holds only native SCRT, so wrap a small amount first — a couple of SCRT is plenty,
+the samples move fractions of one:
+
+```bash
+docker exec -it <container> npm run wrap:scrt -- 2000000   # 2 SCRT, in uscrt
+```
+
+This is a bootstrap step only. In normal operation the provider receives sSCRT from users, and
+`autoUnwrap.ts` converts it back to native SCRT on its own.
+
+## 8. Calibrate gas — against mainnet, not devnet
 
 The devnet's calibration numbers (in this repo's history, in smoke test output) are **not** valid
 for mainnet — gas costs can shift with chain version and contract state. Run for real, once,
 before taking any live traffic:
 
 ```bash
-docker compose exec sscrt-provider npm run calibrate:payment
+docker exec -it <container> npm run calibrate:payment
 ```
+
+The samples are real transactions from the provider's own wallet (self-transfers of sSCRT), so
+they cost real gas — ~10 small transactions at the default sample count.
 
 If you're enabling any whitelisted contract (`ALLOWED_CONTRACT_ADDRESSES`), calibrate each one
 too, with a sample message shaped like the **most expensive** call you intend to allow on it:
 
 ```bash
-docker compose exec sscrt-provider npm run calibrate:contract -- <contractAddress> "<execMsgJson>" 10
+docker exec -it <container> npm run calibrate:contract -- <contractAddress> "<execMsgJson>" 10
 ```
 
-Both write into the SQLite DB under the bind-mounted `./data` directory — back this up after
+Both write into the SQLite DB under the bind-mounted data directory — back this up after
 calibrating (see "Operations" → Backups, below).
 
-## 8. Go-live smoke test — small amounts first
+## 9. Go-live smoke test — small amounts first
 
 Before pointing any real app at it, run the existing smoke scripts against mainnet with a
 throwaway small amount. They read config via `process.env`, so run them inside the container
@@ -247,7 +263,7 @@ Confirm: onboarding creates a real grant, a quote for a small `MsgSend` prices s
 lands with `code 0`, and the provider is reimbursed the expected sSCRT amount — on mainnet, with
 real (small) money, before trusting it with anything larger.
 
-## 9. What's still not here
+## 10. What's still not here
 
 - **Client/dApp integration** — this deploys the *server*. Nothing calls it yet until a frontend
   (or another backend) is wired up to `/onboard`, `/quote`, `/submit` — that's the plan's
@@ -263,7 +279,7 @@ real (small) money, before trusting it with anything larger.
 - **Logs**: `docker compose logs -f sscrt-provider`.
 - **Backups**: back up the `./data` directory periodically — it holds grants, permits, gas
   calibration, and the quote/submit/auto-unwrap history. Losing it doesn't lose funds (on-chain
-  state is authoritative), but does lose calibration (re-run step 7) and per-user grant
+  state is authoritative), but does lose calibration (re-run step 8) and per-user grant
   bookkeeping. If ZimaOS has a snapshot/backup feature for app data volumes, point it at this
   directory.
 - **Rotating the provider key**: generate a new wallet (step 3), fund it, update `.env`, then

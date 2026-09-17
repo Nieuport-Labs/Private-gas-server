@@ -10,6 +10,7 @@
     "smoke:permit": "tsx src/scripts/smoke-permit.ts",
     "smoke:onboard": "tsx src/scripts/smoke-onboard.ts",
     "smoke:simulate": "tsx src/scripts/smoke-simulate.ts",
+    "wrap:scrt": "tsx src/scripts/wrap-scrt.ts",
     "calibrate:payment": "tsx src/scripts/calibrate-payment-gas.ts",
     "smoke:quote": "tsx src/scripts/smoke-quote.ts",
     "smoke:submit": "tsx src/scripts/smoke-submit.ts",
