@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { config } from "./config.js";
-import { getProviderBalances } from "./chain.js";
+import { getProviderBalancesCached } from "./chain.js";
 import {
   getProviderAddress,
   isWalletConfigured,
@@ -119,7 +119,13 @@ export function buildServer() {
   // operational history are not part of that, so they are only included for a logged-in operator
   // — the dashboard gets them from the same endpoint once it has a session.
   app.get("/status", async (req, reply) => {
-    if (!ipLimiter.allow(req.ip)) {
+    // The IP limiter exists to stop anonymous callers making this server do chain queries for
+    // free. A signed-in operator is not that: their dashboard polls every 2s while a maintenance
+    // job runs, which on its own approaches the anonymous budget — and when it tripped, the 429
+    // (which carries no `authenticated` field) read to the dashboard as "logged out", so it wiped
+    // the session and then could not log back in, because the polling kept the limiter tripped.
+    const authed = isValidSession(tokenFromHeader(req.headers.authorization));
+    if (!authed && !ipLimiter.allow(req.ip)) {
       return reply.status(429).send({ error: "rate_limited", message: "rate limit exceeded for this IP" });
     }
 
@@ -140,7 +146,7 @@ export function buildServer() {
       },
     };
 
-    if (!isValidSession(tokenFromHeader(req.headers.authorization))) {
+    if (!authed) {
       return reply.send({ ...publicPart, authenticated: false });
     }
 
@@ -154,7 +160,7 @@ export function buildServer() {
     return reply.send({
       ...publicPart,
       authenticated: true,
-      balances: walletConfigured ? await getProviderBalances() : null,
+      balances: walletConfigured ? await getProviderBalancesCached() : null,
       settings,
       paymentGasConstant,
       job: getJob(),

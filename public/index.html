@@ -429,7 +429,12 @@
   async function refresh() {
     try {
       const res = await fetch("/status", { headers: authHeaders() });
+      // Only an explicit answer may end the session. Any other failure (rate limit, a blip, the
+      // endpoint hiccuping) leaves the token alone — treating those as "logged out" is what
+      // previously locked the operator out mid-job and could not recover.
+      if (!res.ok && res.status !== 401) throw new Error("HTTP " + res.status);
       const data = await res.json();
+      if (res.status === 401) { setToken(null); }
 
       $("provider-address").textContent = data.providerAddress || "no wallet configured";
 
@@ -448,6 +453,7 @@
         $("login-section").classList.remove("hidden");
         $("admin-section").classList.add("hidden");
         $("footer").textContent = "not signed in";
+        setPolling(10000); // back off: a signed-out page must not keep polling at job speed
         return;
       }
 

@@ -7,6 +7,7 @@
 import { SecretNetworkClient } from "secretjs";
 import { config } from "./config.js";
 import { getProviderAddress, getProviderClient } from "./wallet.js";
+import { withRetry } from "./retry.js";
 
 export { getProviderAddress, getProviderClient } from "./wallet.js";
 
@@ -26,7 +27,7 @@ export async function getAccount(address: string): Promise<{
   pubkeyBase64: string | null;
 }> {
   try {
-    const acc = await readClient.query.auth.account({ address });
+    const acc = await withRetry(() => readClient.query.auth.account({ address }));
     // The account object here is NOT wrapped in `.value` (that's an Amino/legacy JSON
     // convention some CLI output uses) — the LCD/gRPC-gateway response nests fields directly
     // under `.account`, with the pubkey as `.account.pub_key.key`, not `.public_key.value`.
@@ -46,9 +47,9 @@ export async function getAccount(address: string): Promise<{
 }
 
 export async function getSscrtCodeHash(): Promise<string> {
-  const resp = await readClient.query.compute.codeHashByContractAddress({
-    contract_address: config.sscrtContract,
-  });
+  const resp = await withRetry(() =>
+    readClient.query.compute.codeHashByContractAddress({ contract_address: config.sscrtContract }),
+  );
   if (!resp.code_hash) throw new Error("could not resolve sSCRT code hash");
   return resp.code_hash;
 }
@@ -62,7 +63,7 @@ export async function getProviderBalances(): Promise<{ uscrt: string; sscrt: str
   const providerClient = getProviderClient();
 
   const [nativeBalance, codeHash] = await Promise.all([
-    readClient.query.bank.balance({ address: providerAddress, denom: "uscrt" }),
+    withRetry(() => readClient.query.bank.balance({ address: providerAddress, denom: "uscrt" })),
     getSscrtCodeHash(),
   ]);
 
@@ -74,14 +75,33 @@ export async function getProviderBalances(): Promise<{ uscrt: string; sscrt: str
     ["balance"],
     false,
   );
-  const sscrtResult: any = await providerClient.query.compute.queryContract({
-    contract_address: config.sscrtContract,
-    code_hash: codeHash,
-    query: { with_permit: { permit, query: { balance: {} } } },
-  });
+  const sscrtResult: any = await withRetry(() =>
+    providerClient.query.compute.queryContract({
+      contract_address: config.sscrtContract,
+      code_hash: codeHash,
+      query: { with_permit: { permit, query: { balance: {} } } },
+    }),
+  );
 
   return {
     uscrt: nativeBalance.balance?.amount ?? "0",
     sscrt: sscrtResult?.balance?.amount ?? "0",
   };
+}
+
+// /status is polled continuously by the dashboard — every 10s normally, every 2s while a
+// maintenance job runs — and each call above costs three chain queries. Unthrottled that is
+// enough on its own to exhaust a public endpoint's rate limit, which then breaks the very job
+// being watched. Serving a slightly stale figure to a status panel is free by comparison.
+//
+// Deliberately not used by wrapScrt or autoUnwrap: those read balances to report or decide on a
+// real change, where a stale answer would be wrong rather than merely old.
+let balanceCache: { at: number; value: { uscrt: string; sscrt: string } } | null = null;
+const BALANCE_CACHE_MS = 10_000;
+
+export async function getProviderBalancesCached(): Promise<{ uscrt: string; sscrt: string }> {
+  if (balanceCache && Date.now() - balanceCache.at < BALANCE_CACHE_MS) return balanceCache.value;
+  const value = await getProviderBalances();
+  balanceCache = { at: Date.now(), value };
+  return value;
 }

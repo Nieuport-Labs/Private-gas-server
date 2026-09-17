@@ -3,3 +3,7 @@ dist/
 *.sqlite3*
 .env
 data/
+
+# local test server (see .dev-serve.mjs) — never part of a deployment
+.dev/
+.dev-serve.log

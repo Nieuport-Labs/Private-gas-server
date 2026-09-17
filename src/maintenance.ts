@@ -2,17 +2,44 @@
 // payment message's gas cost. Shared by the CLI scripts in src/scripts/ and the dashboard's admin
 // endpoints, so both behave identically.
 //
-// Both are deliberately tolerant of a flaky RPC endpoint. Public LCD endpoints intermittently
-// answer with an HTML error page instead of JSON, and an earlier version of the calibration
-// script threw the whole run away when that happened mid-flight — after paying gas for the
-// samples it had already collected. A sample that fails for any reason is now skipped, not fatal.
+// Both are built around a flaky RPC endpoint, because the public ones are. A real run lost 9 of
+// 10 samples to HTML error pages served in place of JSON. So a failed sample is retried, and a
+// sample that stays broken is skipped rather than killing the run — but a run that collects too
+// few samples fails outright instead of recording a constant nobody should trust.
 import { MsgExecuteContract } from "secretjs";
 import { getSscrtCodeHash, getProviderAddress, getProviderClient, getProviderBalances } from "./chain.js";
 import { config } from "./config.js";
 import { buildPaymentMessage, recordPaymentGasCalibration } from "./payment.js";
 import { recordGasCalibration } from "./gasCalibration.js";
+import { isTransient } from "./retry.js";
+
+// A constant recorded from one or two lucky samples is worse than no constant: it looks
+// authoritative, and if that sample was an outlier every quote under-quotes gas, so users'
+// transactions run out of gas with the fee already charged. Below this many successes the run
+// fails loudly and writes nothing. Asking for fewer samples than this lowers the bar accordingly,
+// so a deliberate single-sample spot check still works.
+const MIN_SUCCESSFUL_SAMPLES = 3;
+
+// A sample that dies on a flaky endpoint is worth another go — each attempt is an independent
+// transaction, so this is not a retried broadcast, just a fresh one.
+const SAMPLE_ATTEMPTS = 3;
 
 export type Progress = (message: string) => void;
+
+/**
+ * Names the actual cause instead of guessing. An earlier version always blamed the RPC endpoint,
+ * which sent the operator hunting for a better provider when the real problem was an unfunded
+ * wallet — the failures said "account not found" the whole time.
+ */
+function explainFailure(succeeded: number, attempted: number, required: number, failures: unknown[]): string {
+  const head = `only ${succeeded}/${attempted} samples succeeded, need at least ${required} — nothing recorded.`;
+  const last = failures[failures.length - 1] as Error | undefined;
+  if (!last) return head;
+  if (failures.every((f) => isTransient(f))) {
+    return `${head} Every sample failed on the RPC endpoint (${last.message}). It is rate limiting or down — wait and retry, or point LCD_URL at a different one.`;
+  }
+  return `${head} Cause: ${last.message}`;
+}
 
 export type WrapResult = {
   txHash: string;
@@ -68,29 +95,40 @@ export type CalibrationResult = {
 export async function calibratePaymentGas(sampleCount: number, onProgress: Progress = () => {}): Promise<CalibrationResult> {
   const codeHash = await getSscrtCodeHash();
   const samples: number[] = [];
+  const failures: unknown[] = [];
 
   for (let i = 0; i < sampleCount; i++) {
     // The amount varies per sample so the message isn't byte-identical across runs, matching how
     // it is really used (a different quoted fee each time).
-    try {
-      const msg = buildPaymentMessage(getProviderAddress(), String(1000 + i), codeHash);
-      const tx = await getProviderClient().tx.broadcast([msg], {
-        gasLimit: 200_000,
-        gasPriceInFeeDenom: config.nativeGasPriceUscrt,
-      });
-      if (tx.code !== 0) {
-        onProgress(`sample ${i} failed (code ${tx.code}): ${tx.rawLog}`);
-        continue;
+    for (let attempt = 0; attempt < SAMPLE_ATTEMPTS; attempt++) {
+      try {
+        const msg = buildPaymentMessage(getProviderAddress(), String(1000 + i), codeHash);
+        const tx = await getProviderClient().tx.broadcast([msg], {
+          gasLimit: 200_000,
+          gasPriceInFeeDenom: config.nativeGasPriceUscrt,
+        });
+        if (tx.code !== 0) {
+          failures.push(new Error(`chain rejected the transaction (code ${tx.code}): ${tx.rawLog}`));
+          onProgress(`sample ${i} failed (code ${tx.code}): ${tx.rawLog}`);
+          break; // a chain-level rejection will repeat; retrying only burns more gas
+        }
+        samples.push(Number(tx.gasUsed));
+        onProgress(`sample ${i}: gas_used=${tx.gasUsed}`);
+        break;
+      } catch (err) {
+        const retryable = isTransient(err) && attempt < SAMPLE_ATTEMPTS - 1;
+        if (!retryable) failures.push(err);
+        onProgress(`sample ${i} errored${retryable ? ", retrying" : ""}: ${(err as Error).message}`);
+        if (!retryable) break;
+        await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
       }
-      samples.push(Number(tx.gasUsed));
-      onProgress(`sample ${i}: gas_used=${tx.gasUsed}`);
-    } catch (err) {
-      // A flaky endpoint must not discard the samples already paid for.
-      onProgress(`sample ${i} errored: ${(err as Error).message}`);
     }
   }
 
-  if (samples.length === 0) throw new Error("no successful samples — calibration failed, nothing recorded");
+  const required = Math.min(MIN_SUCCESSFUL_SAMPLES, sampleCount);
+  if (samples.length < required) {
+    throw new Error(explainFailure(samples.length, sampleCount, required, failures));
+  }
 
   const constant = recordPaymentGasCalibration(samples);
   const avg = Math.round(samples.reduce((a, b) => a + b, 0) / samples.length);
@@ -111,31 +149,43 @@ export async function calibrateContractGas(
   if (!codeHash) throw new Error(`could not resolve code hash for ${contractAddress}`);
 
   const samples: number[] = [];
+  const failures: unknown[] = [];
   for (let i = 0; i < sampleCount; i++) {
-    try {
-      const tx = await getProviderClient().tx.broadcast(
-        [
-          new MsgExecuteContract({
-            sender: getProviderAddress(),
-            contract_address: contractAddress,
-            code_hash: codeHash,
-            msg: execMsg,
-          }),
-        ],
-        { gasLimit: 400_000, gasPriceInFeeDenom: config.nativeGasPriceUscrt },
-      );
-      if (tx.code !== 0) {
-        onProgress(`sample ${i} failed (code ${tx.code}): ${tx.rawLog}`);
-        continue;
+    for (let attempt = 0; attempt < SAMPLE_ATTEMPTS; attempt++) {
+      try {
+        const tx = await getProviderClient().tx.broadcast(
+          [
+            new MsgExecuteContract({
+              sender: getProviderAddress(),
+              contract_address: contractAddress,
+              code_hash: codeHash,
+              msg: execMsg,
+            }),
+          ],
+          { gasLimit: 400_000, gasPriceInFeeDenom: config.nativeGasPriceUscrt },
+        );
+        if (tx.code !== 0) {
+          failures.push(new Error(`chain rejected the transaction (code ${tx.code}): ${tx.rawLog}`));
+          onProgress(`sample ${i} failed (code ${tx.code}): ${tx.rawLog}`);
+          break;
+        }
+        samples.push(Number(tx.gasUsed));
+        onProgress(`sample ${i}: gas_used=${tx.gasUsed}`);
+        break;
+      } catch (err) {
+        const retryable = isTransient(err) && attempt < SAMPLE_ATTEMPTS - 1;
+        if (!retryable) failures.push(err);
+        onProgress(`sample ${i} errored${retryable ? ", retrying" : ""}: ${(err as Error).message}`);
+        if (!retryable) break;
+        await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
       }
-      samples.push(Number(tx.gasUsed));
-      onProgress(`sample ${i}: gas_used=${tx.gasUsed}`);
-    } catch (err) {
-      onProgress(`sample ${i} errored: ${(err as Error).message}`);
     }
   }
 
-  if (samples.length === 0) throw new Error("no successful samples — calibration failed, nothing recorded");
+  const requiredC = Math.min(MIN_SUCCESSFUL_SAMPLES, sampleCount);
+  if (samples.length < requiredC) {
+    throw new Error(explainFailure(samples.length, sampleCount, requiredC, failures));
+  }
 
   const constant = recordGasCalibration(contractAddress, samples);
   const avg = Math.round(samples.reduce((a, b) => a + b, 0) / samples.length);
