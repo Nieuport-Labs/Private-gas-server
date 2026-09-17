@@ -18,6 +18,9 @@ import {
 import { getSettings, updateSettings, SettingsError } from "./settings.js";
 import { login, logout, logoutAll, issueSession, isValidSession, tokenFromHeader, sweepSessions } from "./auth.js";
 import { isSetUp, setup, changePassword, PasswordTooShortError } from "./secretStore.js";
+import { wrapScrt, calibratePaymentGas } from "./maintenance.js";
+import { startJob, getJob, JobInProgressError } from "./jobs.js";
+import { getGasConstant } from "./gasCalibration.js";
 import { onboardUser } from "./onboarding.js";
 import { requestQuote, QuoteError } from "./quote.js";
 import { submitQuote, SubmitError } from "./submit.js";
@@ -142,11 +145,19 @@ export function buildServer() {
     }
 
     const lastAutoUnwrap = getLastAutoUnwrap();
+    let paymentGasConstant: number | null = null;
+    try {
+      paymentGasConstant = getGasConstant("sscrt_payment_transfer");
+    } catch {
+      // Not calibrated yet — the dashboard shows this as an action the operator still has to take.
+    }
     return reply.send({
       ...publicPart,
       authenticated: true,
       balances: walletConfigured ? await getProviderBalances() : null,
       settings,
+      paymentGasConstant,
+      job: getJob(),
       lastAutoUnwrap: lastAutoUnwrap && {
         txHash: lastAutoUnwrap.tx_hash,
         sscrtBalanceBefore: lastAutoUnwrap.sscrt_balance_before,
@@ -224,6 +235,32 @@ export function buildServer() {
       return reply.send({ address: setProviderMnemonic(mnemonic) });
     } catch (err) {
       return reply.status(400).send({ error: "bad_mnemonic", message: (err as Error).message });
+    }
+  });
+
+  app.post<{ Body: { amountUscrt: string } }>("/admin/wrap", async (req, reply) => {
+    const amountUscrt = String(req.body?.amountUscrt ?? "").trim();
+    if (!/^\d+$/.test(amountUscrt) || amountUscrt === "0") {
+      return reply.status(400).send({ error: "bad_request", message: "amountUscrt must be a positive whole number" });
+    }
+    try {
+      return reply.send({ job: startJob("wrap", (onProgress) => wrapScrt(amountUscrt, onProgress)) });
+    } catch (err) {
+      if (err instanceof JobInProgressError) return reply.status(409).send({ error: err.code, message: err.message });
+      throw err;
+    }
+  });
+
+  app.post<{ Body: { samples?: number } }>("/admin/calibrate", async (req, reply) => {
+    const samples = Number(req.body?.samples ?? 10);
+    if (!Number.isInteger(samples) || samples < 1 || samples > 50) {
+      return reply.status(400).send({ error: "bad_request", message: "samples must be a whole number between 1 and 50" });
+    }
+    try {
+      return reply.send({ job: startJob("calibrate", (onProgress) => calibratePaymentGas(samples, onProgress)) });
+    } catch (err) {
+      if (err instanceof JobInProgressError) return reply.status(409).send({ error: err.code, message: err.message });
+      throw err;
     }
   });
 

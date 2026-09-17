@@ -46,6 +46,14 @@
     margin: 1rem 0; word-break: break-word; font-family: ui-monospace, monospace;
   }
   .muted { font-size: 0.85rem; opacity: 0.7; }
+  .joblog {
+    font-family: ui-monospace, monospace; font-size: 0.78rem; line-height: 1.45;
+    background: #8881; border: 1px solid #8883; border-radius: 8px;
+    padding: 0.6rem 0.8rem; margin-top: 0.6rem; max-height: 220px; overflow-y: auto;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .spin { display: inline-block; animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
@@ -135,6 +143,22 @@
       </div>
       <button id="seed-ack">I have written it down</button>
     </div>
+
+    <h2>Maintenance</h2>
+    <table>
+      <tr><td>Payment gas calibration</td><td id="calibration-state">—</td></tr>
+    </table>
+
+    <div class="field" style="margin-top: 0.75rem;">
+      <label for="wrap-amount">Wrap native SCRT into sSCRT (uscrt — 1 SCRT = 1000000)</label>
+      <input type="text" id="wrap-amount" inputmode="numeric" value="1000000" />
+    </div>
+    <div class="row">
+      <button id="wrap-btn">Wrap</button>
+      <button id="calibrate-btn">Calibrate payment gas</button>
+      <span id="job-msg"></span>
+    </div>
+    <div id="job-log" class="joblog hidden"></div>
 
     <h2>Settings</h2>
     <div class="field">
@@ -308,6 +332,62 @@
     }
   };
 
+  // --- maintenance jobs ---
+  // While a job runs the poll speeds up, so the log reads like a console instead of updating
+  // twice a minute.
+  let pollTimer = null;
+  function setPolling(ms) {
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(refresh, ms);
+  }
+
+  async function startJob(path, body, confirmText) {
+    if (confirmText && !confirm(confirmText)) return;
+    const msg = $("job-msg");
+    msg.textContent = ""; msg.className = "";
+    try {
+      await api(path, body);
+      await refresh();
+    } catch (err) {
+      msg.textContent = err.message;
+      msg.className = "err";
+    }
+  }
+
+  $("wrap-btn").onclick = () => {
+    const amount = $("wrap-amount").value.trim();
+    startJob("/admin/wrap", { amountUscrt: amount },
+      `Wrap ${amount} uscrt into sSCRT? This is a real transaction and costs gas.`);
+  };
+
+  $("calibrate-btn").onclick = () => {
+    startJob("/admin/calibrate", { samples: 10 },
+      "Run gas calibration? This sends 10 real transactions (~0.05 SCRT in gas).");
+  };
+
+  function renderJob(job) {
+    const log = $("job-log"), msg = $("job-msg"), running = job && job.status === "running";
+    $("wrap-btn").disabled = running;
+    $("calibrate-btn").disabled = running;
+
+    if (!job) { log.classList.add("hidden"); return; }
+    log.classList.remove("hidden");
+    log.textContent = job.log.join("\n") || "starting…";
+    log.scrollTop = log.scrollHeight;
+
+    if (running) {
+      msg.textContent = `${job.name} running…`;
+      msg.className = "warn";
+    } else if (job.status === "failed") {
+      msg.textContent = `${job.name} failed: ${job.error}`;
+      msg.className = "err";
+    } else {
+      msg.textContent = `${job.name} finished`;
+      msg.className = "ok";
+    }
+    setPolling(running ? 2000 : 10000);
+  }
+
   // --- settings ---
   $("save-settings").onclick = async () => {
     const msg = $("settings-msg");
@@ -384,6 +464,12 @@
 
       if (data.settings) fillSettings(data.settings);
 
+      $("calibration-state").textContent = data.paymentGasConstant
+        ? data.paymentGasConstant + " gas"
+        : "not calibrated — quotes will be refused";
+      $("calibration-state").className = data.paymentGasConstant ? "" : "warn";
+      renderJob(data.job);
+
       $("footer").textContent = "last updated " + new Date().toLocaleTimeString();
       $("footer").className = "";
     } catch (err) {
@@ -393,7 +479,7 @@
   }
 
   refresh();
-  setInterval(refresh, 10000);
+  setPolling(10000);
 </script>
 </body>
 </html>
