@@ -9,6 +9,31 @@ function required(name: string): string {
   return v;
 }
 
+// An env var set to an empty string (`FOO=` in a compose file or .env) is a blank, not a value —
+// but it is not undefined, so `??` would happily pass it through. Every required-in-production
+// setting goes through this instead, so a blank fails loudly at startup rather than silently
+// becoming 0, "" or an empty password.
+function envOrUndefined(name: string): string | undefined {
+  return process.env[name] || undefined;
+}
+
+const MIN_ADMIN_PASSWORD_LENGTH = 12;
+
+function requireStrongPasswordInProd(): string {
+  const supplied = process.env.ADMIN_PASSWORD ?? "";
+  if (process.env.NODE_ENV !== "production") return supplied || "devnet-admin";
+
+  if (!supplied) {
+    throw new Error(
+      "ADMIN_PASSWORD is required in production — it protects the dashboard and encrypts the provider's seed. Set it to a long random passphrase.",
+    );
+  }
+  if (supplied.length < MIN_ADMIN_PASSWORD_LENGTH) {
+    throw new Error(`ADMIN_PASSWORD must be at least ${MIN_ADMIN_PASSWORD_LENGTH} characters`);
+  }
+  return supplied;
+}
+
 export const config = {
   chainId: process.env.CHAIN_ID ?? "secretdev-1",
   lcdUrl: process.env.LCD_URL ?? "http://localhost:1317",
@@ -22,7 +47,7 @@ export const config = {
   // the database and the dashboard manages it. This env var only seeds that store on first boot
   // (and keeps devnet/CI working with no setup), after which it can be removed.
   providerMnemonic:
-    process.env.PROVIDER_MNEMONIC ??
+    envOrUndefined("PROVIDER_MNEMONIC") ??
     (process.env.NODE_ENV === "production"
       ? // No longer required: a production deployment can start with no wallet at all and have
         // one generated from the dashboard. Endpoints that need to sign fail cleanly until then.
@@ -34,8 +59,11 @@ export const config = {
   // Gates the dashboard and every admin action, and derives the key that encrypts the mnemonic
   // at rest. Required in production: without it there is nothing protecting a UI that can move
   // the provider's funds. Dev gets a fixed obvious placeholder so local work needs no setup.
-  adminPassword:
-    process.env.ADMIN_PASSWORD ?? (process.env.NODE_ENV === "production" ? required("ADMIN_PASSWORD") : "devnet-admin"),
+  //
+  // Refusing to start beats starting insecurely here. An unset-but-present env var (`FOO=` in a
+  // compose file, which is an empty string rather than undefined) is the likely mistake, and it
+  // would otherwise mean an empty password that logs anyone in.
+  adminPassword: requireStrongPasswordInProd(),
 
   adminSessionTtlSeconds: Number(process.env.ADMIN_SESSION_TTL_SECONDS ?? 60 * 60 * 12),
 
@@ -47,7 +75,8 @@ export const config = {
   // or gets transactions rejected by nodes with a higher minimum. Must be set explicitly via env
   // for any non-devnet deployment — see DEPLOY.md's pre-launch checklist.
   nativeGasPriceUscrt: Number(
-    process.env.NATIVE_GAS_PRICE_USCRT ?? (process.env.NODE_ENV === "production" ? required("NATIVE_GAS_PRICE_USCRT") : 0.25),
+    envOrUndefined("NATIVE_GAS_PRICE_USCRT") ??
+      (process.env.NODE_ENV === "production" ? required("NATIVE_GAS_PRICE_USCRT") : 0.25),
   ),
 
   // Grant scoping (plan: "Bezpečnost" — never an unrestricted grant).
@@ -77,8 +106,8 @@ export const config = {
   rateLimitPerAddressPerMinute: Number(process.env.RATE_LIMIT_PER_ADDRESS_PER_MINUTE ?? 10),
 
   // Provider's margin on top of what it actually spends on gas (quote.ts derives a multiplier
-  // from this: 1 + feeMarkupPercent / 100). Set via env, not a live admin endpoint — the server
-  // has no authentication layer, and adding one just for two numbers would be out of proportion.
+  // from this: 1 + feeMarkupPercent / 100). This and the settings below it are initial values
+  // only — settings.ts stores the live ones, editable from the dashboard.
   feeMarkupPercent: Number(process.env.FEE_MARKUP_PERCENT ?? 10),
 
   // Auto-unwrap: once the provider's own sSCRT balance reaches this threshold, redeem the whole
@@ -107,5 +136,5 @@ export const config = {
 };
 
 function requiredInProd(name: string, devnetDefault: string): string {
-  return process.env[name] ?? (process.env.NODE_ENV === "production" ? required(name) : devnetDefault);
+  return envOrUndefined(name) ?? (process.env.NODE_ENV === "production" ? required(name) : devnetDefault);
 }
