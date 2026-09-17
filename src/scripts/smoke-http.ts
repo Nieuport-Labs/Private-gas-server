@@ -7,7 +7,7 @@
 // Usage: start the server first (`npm run dev`), then run this against it.
 import { MsgSend, MsgExecuteContract, SecretNetworkClient, Wallet } from "secretjs";
 import { config } from "../config.js";
-import { getSscrtCodeHash, providerAddress, providerClient } from "../chain.js";
+import { getSscrtCodeHash, getProviderAddress, getProviderClient } from "../chain.js";
 
 const BASE_URL = process.env.PROVIDER_URL ?? "http://localhost:8787";
 const RECIPIENT = "secret1ap26qrlp8mcq2pg6r47w43l0y8zkqm8a450s03";
@@ -36,10 +36,10 @@ async function main() {
   );
 
   const codeHash = await getSscrtCodeHash();
-  await providerClient.tx.broadcast(
+  await getProviderClient().tx.broadcast(
     [
       new MsgExecuteContract({
-        sender: providerAddress,
+        sender: getProviderAddress(),
         contract_address: config.sscrtContract,
         code_hash: codeHash,
         msg: { transfer: { recipient: address, amount: "1000000" } },
@@ -47,8 +47,8 @@ async function main() {
     ],
     { gasLimit: 200_000, gasPriceInFeeDenom: 0.25 },
   );
-  await providerClient.tx.bank.send(
-    { from_address: providerAddress, to_address: address, amount: [{ denom: "uscrt", amount: "10" }] },
+  await getProviderClient().tx.bank.send(
+    { from_address: getProviderAddress(), to_address: address, amount: [{ denom: "uscrt", amount: "10" }] },
     { gasLimit: 100_000, gasPriceInFeeDenom: 0.25 },
   );
   console.log("funded with sSCRT + a little uscrt");
@@ -73,12 +73,12 @@ async function main() {
     sender: address,
     contract_address: config.sscrtContract,
     code_hash: codeHash,
-    msg: { transfer: { recipient: providerAddress, amount: quote.sscrtPaymentAmount } },
+    msg: { transfer: { recipient: getProviderAddress(), amount: quote.sscrtPaymentAmount } },
   });
   const signedBytes = await userClient.tx.signTx([nativeMsg, paymentMsg], {
     gasLimit: quote.gasLimit,
     feeDenom: "uscrt",
-    feeGranter: providerAddress,
+    feeGranter: getProviderAddress(),
     explicitSignerData: {
       accountNumber: quote.accountNumber,
       sequence: quote.sequence,

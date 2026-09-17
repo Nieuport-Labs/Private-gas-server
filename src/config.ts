@@ -17,13 +17,27 @@ export const config = {
   // The provider's own signing account. Only ever used for: (a) MsgGrantAllowance /
   // MsgRevokeAllowance (grant lifecycle), never for signing a user's action+payment bundle
   // — that transaction is signed solely by the user, per the plan's core decision.
+  //
+  // This is no longer the runtime source of the key: wallet.ts keeps the mnemonic encrypted in
+  // the database and the dashboard manages it. This env var only seeds that store on first boot
+  // (and keeps devnet/CI working with no setup), after which it can be removed.
   providerMnemonic:
     process.env.PROVIDER_MNEMONIC ??
     (process.env.NODE_ENV === "production"
-      ? required("PROVIDER_MNEMONIC")
+      ? // No longer required: a production deployment can start with no wallet at all and have
+        // one generated from the dashboard. Endpoints that need to sign fail cleanly until then.
+        ""
       : // devnet-only fallback so local dev doesn't require exporting anything; never valid
         // outside a throwaway LocalSecret instance.
         "grant rice replace explain federal release fix clever romance raise often wild taxi quarter soccer fiber love must tape steak together observe swap guitar"),
+
+  // Gates the dashboard and every admin action, and derives the key that encrypts the mnemonic
+  // at rest. Required in production: without it there is nothing protecting a UI that can move
+  // the provider's funds. Dev gets a fixed obvious placeholder so local work needs no setup.
+  adminPassword:
+    process.env.ADMIN_PASSWORD ?? (process.env.NODE_ENV === "production" ? required("ADMIN_PASSWORD") : "devnet-admin"),
+
+  adminSessionTtlSeconds: Number(process.env.ADMIN_SESSION_TTL_SECONDS ?? 60 * 60 * 12),
 
   sscrtContract: requiredInProd("SSCRT_CONTRACT", "secret18wy2w4rzg9xxsm2ru8jq8tdq053h39epxvd4rl"),
 

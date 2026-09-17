@@ -16,7 +16,7 @@ import { SecretNetworkClient, type Msg } from "secretjs";
 import type { AccountData } from "@cosmjs/amino";
 import type { AminoSigner } from "secretjs/dist/wallet_amino.js";
 import { config } from "./config.js";
-import { providerAddress } from "./chain.js";
+import { getProviderAddress } from "./chain.js";
 
 class GasEstimationSigner implements AminoSigner {
   constructor(private account: AccountData) {}
@@ -62,7 +62,7 @@ export async function simulateNativeMessages(params: SimulateNativeParams): Prom
   const sim = await simClient.tx.simulate(params.messages, {
     gasLimit: 300_000,
     feeDenom: "uscrt",
-    feeGranter: providerAddress,
+    feeGranter: getProviderAddress(),
     explicitSignerData: {
       accountNumber: params.accountNumber,
       sequence: params.sequence,

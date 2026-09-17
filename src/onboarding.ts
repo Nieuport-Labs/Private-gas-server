@@ -14,9 +14,10 @@
 // gas, and handed to the server directly (not broadcast).
 import type { MsgGrantAllowanceParams } from "secretjs";
 import { config } from "./config.js";
-import { providerClient, providerAddress } from "./chain.js";
+import { getProviderClient, getProviderAddress } from "./chain.js";
 import { db } from "./db.js";
 import type { Permit } from "secretjs";
+import { getSettings } from "./settings.js";
 
 export interface OnboardResult {
   grantTxHash: string;
@@ -36,21 +37,22 @@ function toProtoTimestamp(date: Date) {
 }
 
 export async function onboardUser(address: string, permit: Permit): Promise<OnboardResult> {
-  const expiresAt = new Date(Date.now() + config.grantExpirySeconds * 1000);
+  const settings = getSettings();
+  const expiresAt = new Date(Date.now() + settings.grantExpirySeconds * 1000);
 
   const params: MsgGrantAllowanceParams = {
-    granter: providerAddress,
+    granter: getProviderAddress(),
     grantee: address,
     allowance: {
       allowance: {
-        spend_limit: [{ denom: "uscrt", amount: config.grantSpendLimitUscrt }],
+        spend_limit: [{ denom: "uscrt", amount: settings.grantSpendLimitUscrt }],
         expiration: toProtoTimestamp(expiresAt) as any,
       },
       allowed_messages: config.allowedMessageTypes,
     },
   };
 
-  const tx = await providerClient.tx.feegrant.grantAllowance(params, {
+  const tx = await getProviderClient().tx.feegrant.grantAllowance(params, {
     gasLimit: 150_000,
     gasPriceInFeeDenom: config.nativeGasPriceUscrt,
     feeDenom: "uscrt",
@@ -70,7 +72,7 @@ export async function onboardUser(address: string, permit: Permit): Promise<Onbo
        grant_tx_hash = excluded.grant_tx_hash`,
   ).run(
     address,
-    config.grantSpendLimitUscrt,
+    settings.grantSpendLimitUscrt,
     expiresAt.toISOString(),
     JSON.stringify(config.allowedMessageTypes),
     tx.transactionHash,
@@ -84,7 +86,7 @@ export async function onboardUser(address: string, permit: Permit): Promise<Onbo
   return {
     grantTxHash: tx.transactionHash,
     grantedTo: address,
-    spendLimitUscrt: config.grantSpendLimitUscrt,
+    spendLimitUscrt: settings.grantSpendLimitUscrt,
     expiresAt: expiresAt.toISOString(),
   };
 }

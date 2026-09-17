@@ -90,17 +90,15 @@ chmod 600 .env
 Fill in every field — several have **no safe default** and need a deliberate decision, not a
 copy-paste:
 
-- **`PROVIDER_MNEMONIC`** — generate this **yourself, in your own terminal** (not pasted through
-  any assistant), so the mnemonic never leaves your control:
-
-  ```bash
-  node -e "const {Wallet}=require('secretjs'); const w=new Wallet(); console.log('address:', w.address); console.log('mnemonic:', w.mnemonic);"
-  ```
-
-  (Run from inside `provider-service/` with `node_modules` installed, or in the build stage of
-  the container — `docker compose run --rm sscrt-provider node -e "..."` works too.) Write the
-  mnemonic down somewhere durable and offline (password manager, paper backup). This must be a
-  **brand-new wallet** — never the devnet throwaway mnemonic, never a personal wallet.
+- **`ADMIN_PASSWORD`** — required. It gates the dashboard and every admin action, and derives
+  the key that encrypts the provider's mnemonic at rest. Use a long random passphrase from a
+  password manager. Note that changing it later makes an already-stored mnemonic undecryptable,
+  so re-import the wallet if you rotate it.
+- **`PROVIDER_MNEMONIC`** — leave this **empty**. The wallet is created from the dashboard after
+  the server is up (step 6), which keeps the seed out of your container config entirely. Setting
+  it here still works — it gets adopted into the encrypted store on first boot — but then the
+  seed sits in plaintext in whatever holds your environment variables, which is what the
+  dashboard flow exists to avoid.
 
 - **`NATIVE_GAS_PRICE_USCRT`** — this is the one that actually needs research before you commit to
   it, not a number to guess. Mainnet validators each set their own `min_gas_price`; there is no
@@ -199,13 +197,28 @@ Check it's set to start on boot along with Docker itself:
 sudo systemctl is-enabled docker   # should already be "enabled" on ZimaOS
 ```
 
-## 6. Fund the provider wallet
+## 6. Create the provider wallet, then fund it
 
-Send real SCRT to the address from step 3, **using your own wallet** — this assistant will not
-execute a transfer on your behalf. Size the initial amount for: (a) enough native SCRT to cover
-grants for your expected early traffic, and (b) the plan's hot/cold split — keep only an
-operational reserve here (days to weeks of expected spend), with the bulk held separately and
-topped up periodically, not the whole treasury sitting on this server's key.
+Open the dashboard and sign in with `ADMIN_PASSWORD`. Until a wallet exists the server answers
+`/onboard`, `/quote` and `/submit` with `503 wallet_not_configured` — it runs, but sponsors
+nothing.
+
+**Generate new wallet** creates one and shows you the seed phrase **once**. Write it down on
+paper or into a password manager before dismissing it: there is no endpoint that reads it back,
+by design. **Import from seed phrase** takes an existing wallet instead.
+
+The seed is stored encrypted (AES-256-GCM, key derived from `ADMIN_PASSWORD` via scrypt), so a
+copy of the database file alone does not yield it, and the server decrypts it automatically on
+restart with no manual unlock. Be clear about the limit of that, though: the password lives in
+the container's environment so the server can restart unattended, so anyone who can read *both*
+the environment and the database can still recover the seed. It is better key hygiene than a
+plaintext env var, not a hardware wallet.
+
+Then send real SCRT to the address the dashboard shows, **using your own wallet** — this
+assistant will not execute a transfer on your behalf. Size the initial amount for: (a) enough
+native SCRT to cover grants for your expected early traffic, and (b) the plan's hot/cold split —
+keep only an operational reserve here (days to weeks of expected spend), with the bulk held
+separately and topped up periodically, not the whole treasury sitting on this server's key.
 
 ## 7. Wrap a little SCRT into sSCRT
 

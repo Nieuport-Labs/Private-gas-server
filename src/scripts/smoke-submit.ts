@@ -10,7 +10,7 @@ import { requestQuote } from "../quote.js";
 import { submitQuote } from "../submit.js";
 import { onboardUser } from "../onboarding.js";
 import { config } from "../config.js";
-import { getSscrtCodeHash, providerAddress, providerClient } from "../chain.js";
+import { getSscrtCodeHash, getProviderAddress, getProviderClient } from "../chain.js";
 
 const RECIPIENT = "secret1ap26qrlp8mcq2pg6r47w43l0y8zkqm8a450s03";
 
@@ -40,14 +40,14 @@ async function main() {
 
   const codeHash = await getSscrtCodeHash();
   const fundMsg = new MsgExecuteContract({
-    sender: providerAddress,
+    sender: getProviderAddress(),
     contract_address: config.sscrtContract,
     code_hash: codeHash,
     msg: { transfer: { recipient: address, amount: "1000000" } },
   });
-  await providerClient.tx.broadcast([fundMsg], { gasLimit: 200_000, gasPriceInFeeDenom: 0.25 });
-  await providerClient.tx.bank.send(
-    { from_address: providerAddress, to_address: address, amount: [{ denom: "uscrt", amount: "10" }] },
+  await getProviderClient().tx.broadcast([fundMsg], { gasLimit: 200_000, gasPriceInFeeDenom: 0.25 });
+  await getProviderClient().tx.bank.send(
+    { from_address: getProviderAddress(), to_address: address, amount: [{ denom: "uscrt", amount: "10" }] },
     { gasLimit: 100_000, gasPriceInFeeDenom: 0.25 },
   );
   console.log("funded with sSCRT + a little uscrt");
@@ -73,13 +73,13 @@ async function main() {
     sender: address,
     contract_address: config.sscrtContract,
     code_hash: codeHash,
-    msg: { transfer: { recipient: providerAddress, amount: quote.sscrtPaymentAmount } },
+    msg: { transfer: { recipient: getProviderAddress(), amount: quote.sscrtPaymentAmount } },
   });
 
   const signedBytes = await userClient.tx.signTx([nativeMsg, paymentMsg], {
     gasLimit: quote.gasLimit,
     feeDenom: "uscrt",
-    feeGranter: providerAddress,
+    feeGranter: getProviderAddress(),
     explicitSignerData: {
       accountNumber: quote.accountNumber,
       sequence: quote.sequence,
@@ -103,15 +103,15 @@ async function main() {
   console.log(`OK: full quote -> sign -> submit loop passed. Provider received exactly ${delta} sSCRT.`);
 
   async function providerBalance(codeHash: string): Promise<string> {
-    const permit = await providerClient.utils.accessControl.permit.sign(
-      providerAddress,
+    const permit = await getProviderClient().utils.accessControl.permit.sign(
+      getProviderAddress(),
       config.chainId,
       "smoke-test-provider-balance-check",
       [config.sscrtContract],
       ["balance"],
       false,
     );
-    const r: any = await providerClient.query.compute.queryContract({
+    const r: any = await getProviderClient().query.compute.queryContract({
       contract_address: config.sscrtContract,
       code_hash: codeHash,
       query: { with_permit: { permit, query: { balance: {} } } },

@@ -8,7 +8,7 @@
 // scripts/calibrate-payment-gas.ts, and quote.ts reads it fresh on every quote.
 import { MsgExecuteContract, EncryptionUtilsImpl } from "secretjs";
 import { config } from "./config.js";
-import { providerAddress } from "./chain.js";
+import { getProviderAddress } from "./chain.js";
 import { getGasConstant, recordGasCalibration } from "./gasCalibration.js";
 
 // A CosmWasm message's body is client-side encrypted before it ever reaches a signature —
@@ -54,7 +54,7 @@ export function buildPaymentMessage(payerAddress: string, amountUscrtEquivalent:
     // otherwise make to look it up itself — cheap to cache, see chain.ts's getSscrtCodeHash().
     msg: {
       transfer: {
-        recipient: providerAddress,
+        recipient: getProviderAddress(),
         amount: amountUscrtEquivalent,
       },
     },

@@ -14,7 +14,7 @@ import { requestQuote, QuoteError } from "../quote.js";
 import { submitQuote } from "../submit.js";
 import { onboardUser } from "../onboarding.js";
 import { config } from "../config.js";
-import { getSscrtCodeHash, providerAddress, providerClient } from "../chain.js";
+import { getSscrtCodeHash, getProviderAddress, getProviderClient } from "../chain.js";
 import { recordGasCalibration } from "../gasCalibration.js";
 
 const RECIPIENT = "secret1ap26qrlp8mcq2pg6r47w43l0y8zkqm8a450s03";
@@ -34,12 +34,12 @@ async function main() {
   const calibrationSamples: number[] = [];
   for (let i = 0; i < 5; i++) {
     const msg = new MsgExecuteContract({
-      sender: providerAddress,
+      sender: getProviderAddress(),
       contract_address: config.sscrtContract,
       code_hash: codeHash,
       msg: { increase_allowance: { spender: RECIPIENT, amount: String(1000 + i) } },
     });
-    const tx = await providerClient.tx.broadcast([msg], { gasLimit: 200_000, gasPriceInFeeDenom: 0.25 });
+    const tx = await getProviderClient().tx.broadcast([msg], { gasLimit: 200_000, gasPriceInFeeDenom: 0.25 });
     if (tx.code !== 0) throw new Error(`calibration sample ${i} failed (code ${tx.code}): ${tx.rawLog}`);
     calibrationSamples.push(Number(tx.gasUsed));
   }
@@ -61,12 +61,12 @@ async function main() {
   );
   await onboardUser(address, permit);
 
-  await providerClient.tx.broadcast(
-    [new MsgExecuteContract({ sender: providerAddress, contract_address: config.sscrtContract, code_hash: codeHash, msg: { transfer: { recipient: address, amount: "1000000" } } })],
+  await getProviderClient().tx.broadcast(
+    [new MsgExecuteContract({ sender: getProviderAddress(), contract_address: config.sscrtContract, code_hash: codeHash, msg: { transfer: { recipient: address, amount: "1000000" } } })],
     { gasLimit: 200_000, gasPriceInFeeDenom: 0.25 },
   );
-  await providerClient.tx.bank.send(
-    { from_address: providerAddress, to_address: address, amount: [{ denom: "uscrt", amount: "10" }] },
+  await getProviderClient().tx.bank.send(
+    { from_address: getProviderAddress(), to_address: address, amount: [{ denom: "uscrt", amount: "10" }] },
     { gasLimit: 100_000, gasPriceInFeeDenom: 0.25 },
   );
   console.log("funded with sSCRT + a little uscrt");
@@ -94,11 +94,11 @@ async function main() {
   const quote = await requestQuote({ address, messages: [nativeMsg, contractMsg], pubkeyBase64 });
   console.log("quote issued: gasLimit", quote.gasLimit, "sSCRT payment", quote.sscrtPaymentAmount);
 
-  const paymentMsg = new MsgExecuteContract({ sender: address, contract_address: config.sscrtContract, code_hash: codeHash, msg: { transfer: { recipient: providerAddress, amount: quote.sscrtPaymentAmount } } });
+  const paymentMsg = new MsgExecuteContract({ sender: address, contract_address: config.sscrtContract, code_hash: codeHash, msg: { transfer: { recipient: getProviderAddress(), amount: quote.sscrtPaymentAmount } } });
   const signedBytes = await userClient.tx.signTx([nativeMsg, contractMsg, paymentMsg], {
     gasLimit: quote.gasLimit,
     feeDenom: "uscrt",
-    feeGranter: providerAddress,
+    feeGranter: getProviderAddress(),
     explicitSignerData: { accountNumber: quote.accountNumber, sequence: quote.sequence, chainId: config.chainId },
   });
 

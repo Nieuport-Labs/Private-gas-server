@@ -63,4 +63,22 @@ CREATE TABLE IF NOT EXISTS calibration (
   measured_at TEXT NOT NULL DEFAULT (datetime('now')),
   sample_gas_used TEXT NOT NULL -- JSON array of raw samples, kept for audit
 );
+
+-- Encrypted at rest (see crypto.ts). Holds the provider's mnemonic under key 'provider_mnemonic'.
+-- Encrypted with a key derived from ADMIN_PASSWORD, so a copy of this database file alone does
+-- not yield the seed.
+CREATE TABLE IF NOT EXISTS secrets (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,            -- salt.iv.tag.ciphertext, all base64
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Operator-tunable settings, editable from the dashboard. Env vars seed the initial values on
+-- first boot (see settings.ts); after that this table is the source of truth, so a change made
+-- in the UI survives a restart without editing container config.
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `);

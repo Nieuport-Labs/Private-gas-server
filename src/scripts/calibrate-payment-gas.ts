@@ -8,7 +8,7 @@
 //
 // Usage: tsx src/scripts/calibrate-payment-gas.ts [sampleCount]
 import { buildPaymentMessage, recordPaymentGasCalibration } from "../payment.js";
-import { getSscrtCodeHash, providerAddress, providerClient } from "../chain.js";
+import { getSscrtCodeHash, getProviderAddress, getProviderClient } from "../chain.js";
 import { config } from "../config.js";
 
 async function main() {
@@ -17,7 +17,7 @@ async function main() {
   // native SCRT to pay for these samples and the sSCRT to move in them, on any deployment. The
   // samples are self-transfers (provider -> provider), which the SNIP-20 contract charges the
   // same way as a user's payment — same message shape, same balance writes, same history entry.
-  const client = providerClient;
+  const client = getProviderClient();
 
   const codeHash = await getSscrtCodeHash();
   const samples: number[] = [];
@@ -26,7 +26,7 @@ async function main() {
     // Amount varies slightly (1 + i) so the message isn't byte-identical across samples —
     // matches how it'll actually be used (a real quoted fee amount each time), and avoids
     // measuring a mempool/cache artifact instead of real execution cost.
-    const msg = buildPaymentMessage(providerAddress, String(1000 + i), codeHash);
+    const msg = buildPaymentMessage(getProviderAddress(), String(1000 + i), codeHash);
     const tx = await client.tx.broadcast([msg], { gasLimit: 200_000, gasPriceInFeeDenom: config.nativeGasPriceUscrt });
     if (tx.code !== 0) {
       console.error(`sample ${i} failed (code ${tx.code}): ${tx.rawLog}`);

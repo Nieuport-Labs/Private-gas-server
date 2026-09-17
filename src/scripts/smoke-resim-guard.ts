@@ -12,7 +12,7 @@ import { requestQuote } from "../quote.js";
 import { submitQuote, SubmitError } from "../submit.js";
 import { onboardUser } from "../onboarding.js";
 import { config } from "../config.js";
-import { getSscrtCodeHash, providerAddress, providerClient, readClient } from "../chain.js";
+import { getSscrtCodeHash, getProviderAddress, getProviderClient, readClient } from "../chain.js";
 
 const PROPOSAL_ID = Number(process.argv[2] ?? 2);
 
@@ -38,10 +38,10 @@ async function main() {
   await onboardUser(address, permit);
 
   const codeHash = await getSscrtCodeHash();
-  await providerClient.tx.broadcast(
+  await getProviderClient().tx.broadcast(
     [
       new MsgExecuteContract({
-        sender: providerAddress,
+        sender: getProviderAddress(),
         contract_address: config.sscrtContract,
         code_hash: codeHash,
         msg: { transfer: { recipient: address, amount: "1000000" } },
@@ -77,12 +77,12 @@ async function main() {
     sender: address,
     contract_address: config.sscrtContract,
     code_hash: codeHash,
-    msg: { transfer: { recipient: providerAddress, amount: quote.sscrtPaymentAmount } },
+    msg: { transfer: { recipient: getProviderAddress(), amount: quote.sscrtPaymentAmount } },
   });
   const signedBytes = await userClient.tx.signTx([voteMsg, paymentMsg], {
     gasLimit: quote.gasLimit,
     feeDenom: "uscrt",
-    feeGranter: providerAddress,
+    feeGranter: getProviderAddress(),
     explicitSignerData: { accountNumber: quote.accountNumber, sequence: quote.sequence, chainId: config.chainId },
   });
 

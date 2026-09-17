@@ -101,11 +101,44 @@ See [`DEPLOY.md`](./DEPLOY.md) for a full mainnet deployment walkthrough — pro
 wallet generation, gas calibration, and going live behind a public URL, including a
 self-hosted (ZimaOS + Tailscale Funnel) path that needs no VPS or open router port.
 
+## Dashboard and admin access
+
+`GET /` serves a dashboard that shows the provider's balances and lets the operator manage the
+wallet and tune settings at runtime. It is gated by `ADMIN_PASSWORD`; the public API
+(`/onboard`, `/quote`, `/submit`) and the client-facing part of `/status` are not, since dApp
+users cannot hold the admin password.
+
+- **Wallet**: generate a new provider wallet or import one from a seed phrase. A generated seed
+  is displayed exactly once and is never readable back through any endpoint.
+- **Settings**: fee markup, auto-unwrap (on/off and threshold), per-user grant spend limit and
+  expiry, and the sponsored-contract whitelist — all editable without a restart.
+
+`/status` returns the fee markup and provider address to anyone (a client needs both to build a
+sponsored transaction), and adds balances, settings and auto-unwrap history only for a logged-in
+operator.
+
+### How the seed is stored
+
+The mnemonic is encrypted with AES-256-GCM under a key derived from `ADMIN_PASSWORD` (scrypt) and
+kept in the SQLite database, so it is not in the environment, the compose file, or `docker
+inspect` output, and a stolen database file alone does not yield it. The server decrypts it at
+boot without human involvement, which is what lets it restart unattended — and which also means
+the honest limit of this scheme: an attacker with both the environment and the database can still
+recover the seed. It is defence in depth and better key hygiene, not a vault.
+
+Admin sessions are bearer tokens held in memory, so a restart signs the operator out. Tokens are
+sent in an `Authorization` header rather than a cookie specifically because the public API is
+CORS-open; a cookie combined with that would be a CSRF hole.
+
 ## Configuration
 
 All configuration is environment variables — see [`.env.example`](./.env.example) for the full
-list with defaults and explanations. A few have **no safe default** and must be set explicitly in
-production: `PROVIDER_MNEMONIC`, `NATIVE_GAS_PRICE_USCRT`.
+list with defaults and explanations. Two have **no safe default** and must be set explicitly in
+production: `ADMIN_PASSWORD` and `NATIVE_GAS_PRICE_USCRT`. `PROVIDER_MNEMONIC` is optional and
+best left empty, so the wallet is created through the dashboard instead.
+
+The settings listed above are environment variables only for their *initial* values; once changed
+in the dashboard, the database is the source of truth.
 
 ## Development
 
@@ -138,3 +171,5 @@ automatic grant renewal/revocation.
   invalid quote is rejected pre-broadcast, so the provider never pays for a transaction whose
   preconditions have changed.
 - The server holds no user private keys and never asks for one.
+- The provider's own key is encrypted at rest and is never returned by any endpoint after the
+  one-time reveal when it is generated.

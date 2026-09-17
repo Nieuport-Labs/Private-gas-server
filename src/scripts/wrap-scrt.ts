@@ -7,7 +7,7 @@
 //
 // Usage: tsx src/scripts/wrap-scrt.ts <amountUscrt>
 import { MsgExecuteContract } from "secretjs";
-import { getSscrtCodeHash, providerAddress, providerClient, getProviderBalances } from "../chain.js";
+import { getSscrtCodeHash, getProviderAddress, getProviderClient, getProviderBalances } from "../chain.js";
 import { config } from "../config.js";
 
 async function main() {
@@ -20,10 +20,10 @@ async function main() {
   console.log(`before: ${before.uscrt} uscrt, ${before.sscrt} sSCRT`);
 
   const codeHash = await getSscrtCodeHash();
-  const tx = await providerClient.tx.broadcast(
+  const tx = await getProviderClient().tx.broadcast(
     [
       new MsgExecuteContract({
-        sender: providerAddress,
+        sender: getProviderAddress(),
         contract_address: config.sscrtContract,
         code_hash: codeHash,
         msg: { deposit: {} },

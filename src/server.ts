@@ -7,7 +7,16 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { config } from "./config.js";
-import { providerAddress, getProviderBalances } from "./chain.js";
+import { getProviderBalances } from "./chain.js";
+import {
+  getProviderAddress,
+  isWalletConfigured,
+  setProviderMnemonic,
+  generateProviderWallet,
+  WalletNotConfiguredError,
+} from "./wallet.js";
+import { getSettings, updateSettings, SettingsError } from "./settings.js";
+import { login, logout, isValidSession, tokenFromHeader, sweepSessions } from "./auth.js";
 import { onboardUser } from "./onboarding.js";
 import { requestQuote, QuoteError } from "./quote.js";
 import { submitQuote, SubmitError } from "./submit.js";
@@ -58,6 +67,7 @@ setInterval(
   () => {
     ipLimiter.sweep();
     addressLimiter.sweep();
+    sweepSessions();
   },
   5 * 60_000,
 ).unref();
@@ -72,35 +82,66 @@ function checkRateLimit(ip: string, address: string): string | null {
 export function buildServer() {
   const app = Fastify({ logger: true });
 
-  // /status is meant to be read by both this server's own dashboard and eventual dApp clients
-  // running in a browser on a different origin — without this, neither could call it directly.
-  // No cookies/session auth exist anywhere on this server, so a blanket allow is not a new
-  // exposure; it just lets already-public data be fetched cross-origin.
-  app.addHook("onSend", (_req, reply, payload, done) => {
-    reply.header("Access-Control-Allow-Origin", "*");
+  // The user-facing API is meant to be called by dApp clients running in a browser on a
+  // different origin, so it stays CORS-open. /admin/* deliberately does not: those routes are
+  // authenticated, and letting an arbitrary page read their responses is exactly the exposure
+  // the token auth in auth.ts exists to prevent.
+  app.addHook("onSend", (req, reply, payload, done) => {
+    if (!req.url.startsWith("/admin")) reply.header("Access-Control-Allow-Origin", "*");
     done(null, payload);
   });
 
-  app.get("/health", async () => ({ ok: true, providerAddress }));
+  // Rejects every /admin/* request without a valid session, before any handler runs.
+  app.addHook("onRequest", async (req, reply) => {
+    if (!req.url.startsWith("/admin") || req.url === "/admin/login") return;
+    if (!isValidSession(tokenFromHeader(req.headers.authorization))) {
+      return reply.status(401).send({ error: "unauthorized", message: "log in first" });
+    }
+  });
+
+  app.get("/health", async () => ({
+    ok: true,
+    walletConfigured: isWalletConfigured(),
+    providerAddress: isWalletConfigured() ? getProviderAddress() : null,
+  }));
 
   app.get("/", async (_req, reply) => reply.type("text/html").send(dashboardHtml));
 
+  // Public: a dApp client needs the fee markup to show a user what a sponsored transaction will
+  // cost, and the provider address to build the payment leg. The provider's own balances and
+  // operational history are not part of that, so they are only included for a logged-in operator
+  // — the dashboard gets them from the same endpoint once it has a session.
   app.get("/status", async (req, reply) => {
     if (!ipLimiter.allow(req.ip)) {
       return reply.status(429).send({ error: "rate_limited", message: "rate limit exceeded for this IP" });
     }
-    const balances = await getProviderBalances();
-    const lastAutoUnwrap = getLastAutoUnwrap();
-    return reply.send({
-      providerAddress,
-      balances,
+
+    const settings = getSettings();
+    const walletConfigured = isWalletConfigured();
+    const publicPart = {
+      providerAddress: walletConfigured ? getProviderAddress() : null,
+      walletConfigured,
+      chainId: config.chainId,
+      sscrtContract: config.sscrtContract,
       config: {
-        feeMarkupPercent: config.feeMarkupPercent,
+        feeMarkupPercent: settings.feeMarkupPercent,
         autoUnwrap: {
-          enabled: config.autoUnwrapEnabled,
-          thresholdUscrt: config.autoUnwrapThresholdUscrt,
+          enabled: settings.autoUnwrapEnabled,
+          thresholdUscrt: settings.autoUnwrapThresholdUscrt,
         },
       },
+    };
+
+    if (!isValidSession(tokenFromHeader(req.headers.authorization))) {
+      return reply.send({ ...publicPart, authenticated: false });
+    }
+
+    const lastAutoUnwrap = getLastAutoUnwrap();
+    return reply.send({
+      ...publicPart,
+      authenticated: true,
+      balances: walletConfigured ? await getProviderBalances() : null,
+      settings,
       lastAutoUnwrap: lastAutoUnwrap && {
         txHash: lastAutoUnwrap.tx_hash,
         sscrtBalanceBefore: lastAutoUnwrap.sscrt_balance_before,
@@ -108,6 +149,49 @@ export function buildServer() {
         triggeredAt: lastAutoUnwrap.triggered_at,
       },
     });
+  });
+
+  app.post<{ Body: { password: string } }>("/admin/login", async (req, reply) => {
+    // Rate-limited by IP like everything else, so the password can't be brute-forced quickly.
+    if (!ipLimiter.allow(req.ip)) {
+      return reply.status(429).send({ error: "rate_limited", message: "too many attempts, wait a minute" });
+    }
+    const token = login(req.body?.password ?? "");
+    if (!token) return reply.status(401).send({ error: "bad_password", message: "wrong password" });
+    return reply.send({ token, expiresInSeconds: config.adminSessionTtlSeconds });
+  });
+
+  app.post("/admin/logout", async (req, reply) => {
+    const token = tokenFromHeader(req.headers.authorization);
+    if (token) logout(token);
+    return reply.send({ ok: true });
+  });
+
+  // Generating returns the mnemonic exactly once, in this response and never again — there is no
+  // endpoint that reads it back out. If the operator loses it, the remedy is to move the funds
+  // out using it while they still have it, not to ask the server.
+  app.post("/admin/wallet/generate", async (_req, reply) => {
+    const { address, mnemonic } = generateProviderWallet();
+    return reply.send({ address, mnemonic });
+  });
+
+  app.post<{ Body: { mnemonic: string } }>("/admin/wallet/import", async (req, reply) => {
+    const mnemonic = req.body?.mnemonic?.trim();
+    if (!mnemonic) return reply.status(400).send({ error: "bad_request", message: "mnemonic is required" });
+    try {
+      return reply.send({ address: setProviderMnemonic(mnemonic) });
+    } catch (err) {
+      return reply.status(400).send({ error: "bad_mnemonic", message: (err as Error).message });
+    }
+  });
+
+  app.post<{ Body: Record<string, unknown> }>("/admin/settings", async (req, reply) => {
+    try {
+      return reply.send({ settings: updateSettings(req.body as never) });
+    } catch (err) {
+      if (err instanceof SettingsError) return reply.status(400).send({ error: "bad_settings", message: err.message });
+      throw err;
+    }
   });
 
   app.post<{ Body: { address: string; permit: Permit } }>("/onboard", async (req, reply) => {
@@ -122,6 +206,9 @@ export function buildServer() {
       const result = await onboardUser(address, permit);
       return reply.send(result);
     } catch (err: any) {
+      if (err instanceof WalletNotConfiguredError) {
+        return reply.status(503).send({ error: err.code, message: err.message });
+      }
       req.log.error(err);
       return reply.status(500).send({ error: "onboard_failed", message: err.message });
     }
@@ -145,6 +232,9 @@ export function buildServer() {
         }
         if (err instanceof QuoteError) {
           return reply.status(QUOTE_ERROR_STATUS[err.code] ?? 400).send({ error: err.code, message: err.message });
+        }
+        if (err instanceof WalletNotConfiguredError) {
+          return reply.status(503).send({ error: err.code, message: err.message });
         }
         req.log.error(err);
         return reply.status(500).send({ error: "quote_failed", message: (err as Error).message });
@@ -172,6 +262,9 @@ export function buildServer() {
     } catch (err) {
       if (err instanceof SubmitError) {
         return reply.status(SUBMIT_ERROR_STATUS[err.code] ?? 400).send({ error: err.code, message: err.message });
+      }
+      if (err instanceof WalletNotConfiguredError) {
+        return reply.status(503).send({ error: err.code, message: err.message });
       }
       req.log.error(err);
       return reply.status(500).send({ error: "submit_failed", message: (err as Error).message });

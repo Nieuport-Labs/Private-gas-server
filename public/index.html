@@ -3,17 +3,18 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>sSCRT gas provider — status</title>
+<title>sSCRT gas provider</title>
 <style>
   :root { color-scheme: light dark; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    max-width: 720px;
+    max-width: 760px;
     margin: 3rem auto;
     padding: 0 1.5rem;
     line-height: 1.5;
   }
   h1 { font-size: 1.25rem; margin-bottom: 0.25rem; }
+  h2 { font-size: 0.95rem; margin: 2rem 0 0.5rem; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.7; }
   .address { font-family: ui-monospace, monospace; font-size: 0.85rem; opacity: 0.7; word-break: break-all; }
   .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1.5rem 0; }
   .card { border: 1px solid #8884; border-radius: 12px; padding: 1rem 1.25rem; }
@@ -23,64 +24,298 @@
   td { padding: 0.4rem 0; border-bottom: 1px solid #8882; }
   td:first-child { opacity: 0.7; }
   td:last-child { text-align: right; font-family: ui-monospace, monospace; }
-  .stale { color: #d9822b; }
   .err { color: #d33; }
+  .ok { color: #2a8; }
+  .warn { color: #d9822b; }
   footer { margin-top: 2rem; font-size: 0.8rem; opacity: 0.6; }
+  input, button, textarea {
+    font: inherit; padding: 0.5rem 0.7rem; border-radius: 8px;
+    border: 1px solid #8886; background: transparent; color: inherit;
+  }
+  button { cursor: pointer; background: #8882; }
+  button:hover { background: #8883; }
+  button.primary { background: #3574d4; color: #fff; border-color: transparent; }
+  button.danger { border-color: #d336; color: #d33; }
+  .row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+  .field { display: grid; gap: 0.25rem; margin-bottom: 0.75rem; }
+  .field label { font-size: 0.8rem; opacity: 0.7; }
+  .hidden { display: none !important; }
+  .mono { font-family: ui-monospace, monospace; }
+  .seedbox {
+    border: 2px solid #d9822b; border-radius: 10px; padding: 1rem;
+    margin: 1rem 0; word-break: break-word; font-family: ui-monospace, monospace;
+  }
+  .muted { font-size: 0.85rem; opacity: 0.7; }
 </style>
 </head>
 <body>
   <h1>sSCRT gas provider</h1>
   <div class="address" id="provider-address">loading…</div>
 
-  <div class="cards">
-    <div class="card">
-      <div class="label">SCRT (native)</div>
-      <div class="value" id="uscrt-balance">—</div>
+  <!-- Login -->
+  <section id="login-section" class="hidden">
+    <h2>Sign in</h2>
+    <div class="field">
+      <label for="password">Admin password</label>
+      <input type="password" id="password" autocomplete="current-password" />
     </div>
-    <div class="card">
-      <div class="label">sSCRT</div>
-      <div class="value" id="sscrt-balance">—</div>
+    <div class="row">
+      <button class="primary" id="login-btn">Sign in</button>
+      <span id="login-error" class="err"></span>
     </div>
-  </div>
+    <p class="muted">Balances, wallet management and settings require the admin password.</p>
+  </section>
 
-  <table>
-    <tr><td>Fee markup</td><td id="fee-markup">—</td></tr>
-    <tr><td>Auto-unwrap</td><td id="auto-unwrap-enabled">—</td></tr>
-    <tr><td>Auto-unwrap threshold</td><td id="auto-unwrap-threshold">—</td></tr>
-    <tr><td>Last auto-unwrap</td><td id="last-unwrap">—</td></tr>
-  </table>
+  <!-- Authenticated -->
+  <section id="admin-section" class="hidden">
+    <div class="cards">
+      <div class="card">
+        <div class="label">SCRT (native)</div>
+        <div class="value" id="uscrt-balance">—</div>
+      </div>
+      <div class="card">
+        <div class="label">sSCRT</div>
+        <div class="value" id="sscrt-balance">—</div>
+      </div>
+    </div>
 
-  <footer id="footer">refreshing every 10s…</footer>
+    <table>
+      <tr><td>Chain</td><td id="chain-id">—</td></tr>
+      <tr><td>Last auto-unwrap</td><td id="last-unwrap">—</td></tr>
+    </table>
+
+    <h2>Wallet</h2>
+    <div id="wallet-missing" class="hidden">
+      <p class="warn">No wallet configured — the server cannot sponsor anything until one exists.</p>
+    </div>
+    <div class="row">
+      <button id="generate-btn">Generate new wallet</button>
+      <button id="import-toggle">Import from seed phrase</button>
+    </div>
+
+    <div id="import-form" class="hidden" style="margin-top: 0.75rem;">
+      <div class="field">
+        <label for="mnemonic">Seed phrase (12 or 24 words)</label>
+        <textarea id="mnemonic" rows="3" autocomplete="off" spellcheck="false"></textarea>
+      </div>
+      <div class="row">
+        <button class="primary" id="import-btn">Import</button>
+        <span id="wallet-error" class="err"></span>
+      </div>
+    </div>
+
+    <div id="seed-reveal" class="hidden">
+      <div class="seedbox">
+        <div class="warn" style="font-family: -apple-system, sans-serif; margin-bottom: 0.5rem;">
+          <strong>Write this down now.</strong> It is shown once and cannot be retrieved later.
+          Anyone with this phrase controls the provider's funds.
+        </div>
+        <div id="seed-words"></div>
+      </div>
+      <button id="seed-ack">I have written it down</button>
+    </div>
+
+    <h2>Settings</h2>
+    <div class="field">
+      <label for="fee-markup">Fee markup (%)</label>
+      <input type="number" id="fee-markup" min="0" max="1000" step="0.5" />
+    </div>
+    <div class="field">
+      <label for="auto-unwrap-enabled">Auto-unwrap</label>
+      <select id="auto-unwrap-enabled">
+        <option value="true">enabled</option>
+        <option value="false">disabled</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="auto-unwrap-threshold">Auto-unwrap threshold (uscrt)</label>
+      <input type="text" id="auto-unwrap-threshold" inputmode="numeric" />
+    </div>
+    <div class="field">
+      <label for="grant-limit">Grant spend limit per user (uscrt)</label>
+      <input type="text" id="grant-limit" inputmode="numeric" />
+    </div>
+    <div class="field">
+      <label for="grant-expiry">Grant expiry (seconds)</label>
+      <input type="text" id="grant-expiry" inputmode="numeric" />
+    </div>
+    <div class="field">
+      <label for="whitelist">Whitelisted contracts (comma-separated, each needs gas calibration)</label>
+      <textarea id="whitelist" rows="2" spellcheck="false" class="mono"></textarea>
+    </div>
+    <div class="row">
+      <button class="primary" id="save-settings">Save settings</button>
+      <span id="settings-msg"></span>
+    </div>
+
+    <h2></h2>
+    <button id="logout-btn">Sign out</button>
+  </section>
+
+  <footer id="footer">loading…</footer>
 
 <script>
-  const fmtScrt = (uscrt) => (Number(uscrt) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 }) + " SCRT";
+  const TOKEN_KEY = "sscrt-provider-token";
+  let token = null;
+  try { token = localStorage.getItem(TOKEN_KEY); } catch {}
+
+  const $ = (id) => document.getElementById(id);
+  const fmtScrt = (uscrt) =>
+    (Number(uscrt) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 }) + " SCRT";
+
+  function authHeaders() {
+    return token ? { Authorization: "Bearer " + token } : {};
+  }
+
+  function setToken(next) {
+    token = next;
+    try {
+      if (next) localStorage.setItem(TOKEN_KEY, next);
+      else localStorage.removeItem(TOKEN_KEY);
+    } catch {}
+  }
+
+  async function api(path, body) {
+    const res = await fetch(path, {
+      method: body === undefined ? "GET" : "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+    return data;
+  }
+
+  // --- auth ---
+  $("login-btn").onclick = async () => {
+    $("login-error").textContent = "";
+    try {
+      const { token: t } = await api("/admin/login", { password: $("password").value });
+      setToken(t);
+      $("password").value = "";
+      await refresh();
+    } catch (err) {
+      $("login-error").textContent = err.message;
+    }
+  };
+  $("password").addEventListener("keydown", (e) => { if (e.key === "Enter") $("login-btn").click(); });
+
+  $("logout-btn").onclick = async () => {
+    try { await api("/admin/logout", {}); } catch {}
+    setToken(null);
+    await refresh();
+  };
+
+  // --- wallet ---
+  $("import-toggle").onclick = () => $("import-form").classList.toggle("hidden");
+
+  $("generate-btn").onclick = async () => {
+    if (!confirm("Generate a NEW wallet? The current one (if any) stops being used — move its funds out first.")) return;
+    $("wallet-error").textContent = "";
+    try {
+      const { mnemonic } = await api("/admin/wallet/generate", {});
+      $("seed-words").textContent = mnemonic;
+      $("seed-reveal").classList.remove("hidden");
+      await refresh();
+    } catch (err) {
+      $("wallet-error").textContent = err.message;
+    }
+  };
+
+  $("seed-ack").onclick = () => {
+    $("seed-words").textContent = "";
+    $("seed-reveal").classList.add("hidden");
+  };
+
+  $("import-btn").onclick = async () => {
+    $("wallet-error").textContent = "";
+    try {
+      await api("/admin/wallet/import", { mnemonic: $("mnemonic").value });
+      $("mnemonic").value = "";
+      $("import-form").classList.add("hidden");
+      await refresh();
+    } catch (err) {
+      $("wallet-error").textContent = err.message;
+    }
+  };
+
+  // --- settings ---
+  $("save-settings").onclick = async () => {
+    const msg = $("settings-msg");
+    msg.textContent = "";
+    msg.className = "";
+    try {
+      await api("/admin/settings", {
+        feeMarkupPercent: Number($("fee-markup").value),
+        autoUnwrapEnabled: $("auto-unwrap-enabled").value === "true",
+        autoUnwrapThresholdUscrt: $("auto-unwrap-threshold").value.trim(),
+        grantSpendLimitUscrt: $("grant-limit").value.trim(),
+        grantExpirySeconds: Number($("grant-expiry").value),
+        allowedContractAddresses: $("whitelist").value.split(",").map((s) => s.trim()).filter(Boolean),
+      });
+      msg.textContent = "saved";
+      msg.className = "ok";
+    } catch (err) {
+      msg.textContent = err.message;
+      msg.className = "err";
+    }
+  };
+
+  // Not overwritten while the operator is mid-edit, otherwise the 10s poll would wipe typing.
+  let settingsDirty = false;
+  for (const id of ["fee-markup", "auto-unwrap-enabled", "auto-unwrap-threshold", "grant-limit", "grant-expiry", "whitelist"]) {
+    $(id).addEventListener("input", () => { settingsDirty = true; });
+  }
+
+  function fillSettings(s) {
+    if (settingsDirty) return;
+    $("fee-markup").value = s.feeMarkupPercent;
+    $("auto-unwrap-enabled").value = String(s.autoUnwrapEnabled);
+    $("auto-unwrap-threshold").value = s.autoUnwrapThresholdUscrt;
+    $("grant-limit").value = s.grantSpendLimitUscrt;
+    $("grant-expiry").value = s.grantExpirySeconds;
+    $("whitelist").value = s.allowedContractAddresses.join(", ");
+  }
 
   async function refresh() {
     try {
-      const res = await fetch("/status");
-      if (!res.ok) throw new Error("HTTP " + res.status);
-      const s = await res.json();
+      const res = await fetch("/status", { headers: authHeaders() });
+      const data = await res.json();
 
-      document.getElementById("provider-address").textContent = s.providerAddress;
-      document.getElementById("uscrt-balance").textContent = fmtScrt(s.balances.uscrt);
-      document.getElementById("sscrt-balance").textContent = fmtScrt(s.balances.sscrt);
-      document.getElementById("fee-markup").textContent = s.config.feeMarkupPercent + "%";
-      document.getElementById("auto-unwrap-enabled").textContent = s.config.autoUnwrap.enabled ? "enabled" : "disabled";
-      document.getElementById("auto-unwrap-threshold").textContent = fmtScrt(s.config.autoUnwrap.thresholdUscrt);
-      document.getElementById("last-unwrap").textContent = s.lastAutoUnwrap
-        ? `${fmtScrt(s.lastAutoUnwrap.sscrtBalanceBefore)} → SCRT at ${new Date(s.lastAutoUnwrap.triggeredAt).toLocaleString()} (code ${s.lastAutoUnwrap.code})`
+      $("provider-address").textContent = data.providerAddress || "no wallet configured";
+
+      if (!data.authenticated) {
+        // A token that the server no longer accepts (restart, expiry) should not look like a bug.
+        if (token) setToken(null);
+        $("login-section").classList.remove("hidden");
+        $("admin-section").classList.add("hidden");
+        $("footer").textContent = "not signed in";
+        return;
+      }
+
+      $("login-section").classList.add("hidden");
+      $("admin-section").classList.remove("hidden");
+      $("wallet-missing").classList.toggle("hidden", data.walletConfigured);
+
+      $("uscrt-balance").textContent = data.balances ? fmtScrt(data.balances.uscrt) : "—";
+      $("sscrt-balance").textContent = data.balances ? fmtScrt(data.balances.sscrt) : "—";
+      $("chain-id").textContent = data.chainId;
+      $("last-unwrap").textContent = data.lastAutoUnwrap
+        ? `${fmtScrt(data.lastAutoUnwrap.sscrtBalanceBefore)} at ${data.lastAutoUnwrap.triggeredAt}`
         : "never";
 
-      document.getElementById("footer").textContent = "last updated " + new Date().toLocaleTimeString();
-      document.getElementById("footer").className = "";
+      if (data.settings) fillSettings(data.settings);
+
+      $("footer").textContent = "last updated " + new Date().toLocaleTimeString();
+      $("footer").className = "";
     } catch (err) {
-      document.getElementById("footer").textContent = "failed to load /status: " + err.message;
-      document.getElementById("footer").className = "err";
+      $("footer").textContent = "failed to load /status: " + err.message;
+      $("footer").className = "err";
     }
   }
 
   refresh();
-  setInterval(refresh, 10_000);
+  setInterval(refresh, 10000);
 </script>
 </body>
 </html>

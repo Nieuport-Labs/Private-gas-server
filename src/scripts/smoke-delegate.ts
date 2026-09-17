@@ -8,7 +8,7 @@ import { requestQuote } from "../quote.js";
 import { submitQuote } from "../submit.js";
 import { onboardUser } from "../onboarding.js";
 import { config } from "../config.js";
-import { getSscrtCodeHash, providerAddress, providerClient } from "../chain.js";
+import { getSscrtCodeHash, getProviderAddress, getProviderClient } from "../chain.js";
 
 const VALIDATOR = "secretvaloper14aj08vd2ntty7dvskdmdu4zhf23mcwgtdvh6qt";
 
@@ -34,10 +34,10 @@ async function main() {
   await onboardUser(address, permit);
 
   const codeHash = await getSscrtCodeHash();
-  await providerClient.tx.broadcast(
+  await getProviderClient().tx.broadcast(
     [
       new MsgExecuteContract({
-        sender: providerAddress,
+        sender: getProviderAddress(),
         contract_address: config.sscrtContract,
         code_hash: codeHash,
         msg: { transfer: { recipient: address, amount: "1000000" } },
@@ -49,8 +49,8 @@ async function main() {
   // purpose (plan: "provider s allowance tahající platbu vlastní transakcí" was rejected
   // precisely because a grant must never reach into what it's meant to only pay fees for).
   // This is the address's own stake, separate from the sponsorship mechanism entirely.
-  await providerClient.tx.bank.send(
-    { from_address: providerAddress, to_address: address, amount: [{ denom: "uscrt", amount: "50000" }] },
+  await getProviderClient().tx.bank.send(
+    { from_address: getProviderAddress(), to_address: address, amount: [{ denom: "uscrt", amount: "50000" }] },
     { gasLimit: 100_000, gasPriceInFeeDenom: 0.25 },
   );
   console.log("funded with sSCRT (for the fee reimbursement) and uscrt (the stake itself)");
@@ -69,12 +69,12 @@ async function main() {
     sender: address,
     contract_address: config.sscrtContract,
     code_hash: codeHash,
-    msg: { transfer: { recipient: providerAddress, amount: quote.sscrtPaymentAmount } },
+    msg: { transfer: { recipient: getProviderAddress(), amount: quote.sscrtPaymentAmount } },
   });
   const signedBytes = await userClient.tx.signTx([delegateMsg, paymentMsg], {
     gasLimit: quote.gasLimit,
     feeDenom: "uscrt",
-    feeGranter: providerAddress,
+    feeGranter: getProviderAddress(),
     explicitSignerData: { accountNumber: quote.accountNumber, sequence: quote.sequence, chainId: config.chainId },
   });
 

@@ -4,7 +4,7 @@
 // code path (onboardUser), not hand-rolled CLI calls like step 0's manual verification.
 import { Wallet, SecretNetworkClient } from "secretjs";
 import { onboardUser, getStoredGrant, getStoredPermit } from "../onboarding.js";
-import { getAccount, providerAddress } from "../chain.js";
+import { getAccount, getProviderAddress } from "../chain.js";
 import { config } from "../config.js";
 
 async function main() {
@@ -32,7 +32,7 @@ async function main() {
     false,
   );
 
-  console.log("provider address (granter):", providerAddress);
+  console.log("provider address (granter):", getProviderAddress());
   const result = await onboardUser(address, permit);
   console.log("onboard result:", result);
 

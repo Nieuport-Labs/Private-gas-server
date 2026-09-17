@@ -7,13 +7,14 @@ import { randomUUID } from "node:crypto";
 import { MsgExecuteContract, type Msg } from "secretjs";
 import { config } from "./config.js";
 import { db } from "./db.js";
-import { getAccount, getSscrtCodeHash, providerAddress } from "./chain.js";
+import { getAccount, getSscrtCodeHash, getProviderAddress } from "./chain.js";
 import { getStoredGrant, getStoredPermit } from "./onboarding.js";
 import { simulateNativeMessages } from "./gasEstimation.js";
 import { getPaymentGasConstant, buildPaymentMessage, getServerEncryptionUtils } from "./payment.js";
 import { getGasConstant } from "./gasCalibration.js";
 import { MSG_EXECUTE_CONTRACT_TYPE_URL } from "./messageRegistry.js";
 import { readClient } from "./chain.js";
+import { getSettings } from "./settings.js";
 
 export class QuoteError extends Error {
   constructor(
@@ -98,7 +99,7 @@ export async function requestQuote(req: QuoteRequest): Promise<QuoteResult> {
     const msg = req.messages[i];
     if (msgTypeUrls[i] === MSG_EXECUTE_CONTRACT_TYPE_URL) {
       const contractMsg = msg as MsgExecuteContract<object>;
-      if (!config.allowedContractAddresses.includes(contractMsg.contractAddress)) {
+      if (!getSettings().allowedContractAddresses.includes(contractMsg.contractAddress)) {
         throw new QuoteError(
           `contract ${contractMsg.contractAddress} is not whitelisted for sponsored calls`,
           "contract_not_allowed",
@@ -164,7 +165,7 @@ export async function requestQuote(req: QuoteRequest): Promise<QuoteResult> {
 
   // sSCRT is pegged 1:1 to SCRT, so the native fee amount converts directly — no oracle,
   // no exchange-rate lookup. A token that wasn't 1:1 would need that step here instead.
-  const paymentMarkup = 1 + config.feeMarkupPercent / 100;
+  const paymentMarkup = 1 + getSettings().feeMarkupPercent / 100;
   const sscrtPaymentAmount = String(Math.ceil(Number(feeAmountUscrt) * paymentMarkup));
 
   if (balance < BigInt(sscrtPaymentAmount)) {
@@ -196,7 +197,7 @@ export async function requestQuote(req: QuoteRequest): Promise<QuoteResult> {
     req.address,
     account.sequence,
     account.accountNumber,
-    JSON.stringify({ messages: aminoMessages, gasLimit, feeAmountUscrt, feeGranter: providerAddress }),
+    JSON.stringify({ messages: aminoMessages, gasLimit, feeAmountUscrt, feeGranter: getProviderAddress() }),
     sscrtPaymentAmount,
     gasLimit,
     expiresAt.toISOString(),
@@ -209,7 +210,7 @@ export async function requestQuote(req: QuoteRequest): Promise<QuoteResult> {
     messages: aminoMessages,
     gasLimit,
     feeAmountUscrt,
-    feeGranter: providerAddress,
+    feeGranter: getProviderAddress(),
     sscrtPaymentAmount,
     accountNumber: account.accountNumber,
     sequence: account.sequence,

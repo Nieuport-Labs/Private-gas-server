@@ -4,19 +4,11 @@
 // Deliberately never used to sign a user's action+payment bundle — per the plan, that
 // transaction is signed solely by the user in Keplr; the server only builds the SignDoc,
 // validates, and broadcasts already-signed bytes.
-import { SecretNetworkClient, Wallet } from "secretjs";
+import { SecretNetworkClient } from "secretjs";
 import { config } from "./config.js";
+import { getProviderAddress, getProviderClient } from "./wallet.js";
 
-const providerWallet = new Wallet(config.providerMnemonic);
-
-export const providerAddress = providerWallet.address;
-
-export const providerClient = new SecretNetworkClient({
-  url: config.lcdUrl,
-  chainId: config.chainId,
-  wallet: providerWallet,
-  walletAddress: providerAddress,
-});
+export { getProviderAddress, getProviderClient } from "./wallet.js";
 
 // A client with no wallet at all — used for read-only queries (account info, balance via a
 // user-supplied permit, simulate). Nothing here can sign anything.
@@ -66,6 +58,9 @@ export async function getSscrtCodeHash(): Promise<string> {
 // The sSCRT side reads its own private balance the same way it reads anyone else's: a
 // self-signed SNIP-24 permit, no viewing key needed (same mechanism proven in smoke-permit.ts).
 export async function getProviderBalances(): Promise<{ uscrt: string; sscrt: string }> {
+  const providerAddress = getProviderAddress();
+  const providerClient = getProviderClient();
+
   const [nativeBalance, codeHash] = await Promise.all([
     readClient.query.bank.balance({ address: providerAddress, denom: "uscrt" }),
     getSscrtCodeHash(),

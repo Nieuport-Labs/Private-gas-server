@@ -6,7 +6,7 @@ import { MsgSend, SecretNetworkClient, Wallet, MsgExecuteContract } from "secret
 import { requestQuote } from "../quote.js";
 import { onboardUser } from "../onboarding.js";
 import { config } from "../config.js";
-import { getSscrtCodeHash, providerAddress, providerClient } from "../chain.js";
+import { getSscrtCodeHash, getProviderAddress, getProviderClient } from "../chain.js";
 
 const RECIPIENT = "secret1ap26qrlp8mcq2pg6r47w43l0y8zkqm8a450s03";
 
@@ -41,12 +41,12 @@ async function main() {
   // stash so the balance check in requestQuote has something to find sufficient.
   const codeHash = await getSscrtCodeHash();
   const fundMsg = new MsgExecuteContract({
-    sender: providerAddress,
+    sender: getProviderAddress(),
     contract_address: config.sscrtContract,
     code_hash: codeHash,
     msg: { transfer: { recipient: address, amount: "1000000" } },
   });
-  const fundTx = await providerClient.tx.broadcast([fundMsg], { gasLimit: 200_000, gasPriceInFeeDenom: 0.25 });
+  const fundTx = await getProviderClient().tx.broadcast([fundMsg], { gasLimit: 200_000, gasPriceInFeeDenom: 0.25 });
   if (fundTx.code !== 0) throw new Error(`funding tx failed: ${fundTx.rawLog}`);
   console.log("funded with 1000000 sSCRT from provider");
 
@@ -56,8 +56,8 @@ async function main() {
   // refusal is itself the desired behaviour: catch a doomed action before anyone signs
   // anything, not paper over it). This tiny top-up is a test-setup convenience for exercising
   // the quote machinery end to end, not a statement that the design needs native SCRT.
-  const topUpTx = await providerClient.tx.bank.send(
-    { from_address: providerAddress, to_address: address, amount: [{ denom: "uscrt", amount: "10" }] },
+  const topUpTx = await getProviderClient().tx.bank.send(
+    { from_address: getProviderAddress(), to_address: address, amount: [{ denom: "uscrt", amount: "10" }] },
     { gasLimit: 100_000, gasPriceInFeeDenom: 0.25 },
   );
   if (topUpTx.code !== 0) throw new Error(`uscrt top-up failed: ${topUpTx.rawLog}`);

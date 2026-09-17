@@ -9,7 +9,8 @@
 import { MsgExecuteContract } from "secretjs";
 import { config } from "./config.js";
 import { db } from "./db.js";
-import { getProviderBalances, getSscrtCodeHash, providerAddress, providerClient } from "./chain.js";
+import { getProviderBalances, getSscrtCodeHash, getProviderAddress, getProviderClient } from "./chain.js";
+import { getSettings } from "./settings.js";
 
 export interface AutoUnwrapRow {
   tx_hash: string;
@@ -29,18 +30,19 @@ export function getLastAutoUnwrap(): AutoUnwrapRow | null {
 let inProgress = false;
 
 export async function checkAndUnwrapIfNeeded(): Promise<void> {
-  if (!config.autoUnwrapEnabled || inProgress) return;
+  const settings = getSettings();
+  if (!settings.autoUnwrapEnabled || inProgress) return;
 
   inProgress = true;
   try {
     const { sscrt } = await getProviderBalances();
-    if (BigInt(sscrt) < BigInt(config.autoUnwrapThresholdUscrt)) return;
+    if (BigInt(sscrt) < BigInt(settings.autoUnwrapThresholdUscrt)) return;
 
     const codeHash = await getSscrtCodeHash();
-    const tx = await providerClient.tx.broadcast(
+    const tx = await getProviderClient().tx.broadcast(
       [
         new MsgExecuteContract({
-          sender: providerAddress,
+          sender: getProviderAddress(),
           contract_address: config.sscrtContract,
           code_hash: codeHash,
           msg: { redeem: { amount: sscrt, denom: "uscrt" } },
