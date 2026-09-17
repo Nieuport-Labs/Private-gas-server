@@ -11,7 +11,7 @@ import { Wallet, SecretNetworkClient } from "secretjs";
 import { db } from "./db.js";
 import { config } from "./config.js";
 import { encryptWithKey, decryptWithKey } from "./crypto.js";
-import { getDataKey, isUnlocked } from "./secretStore.js";
+import { getDataKey, isUnlocked, unlockWithKeyfile } from "./secretStore.js";
 
 const MNEMONIC_KEY = "provider_mnemonic";
 
@@ -73,11 +73,14 @@ export function initWallet(): void {
 }
 
 /**
- * The maintenance scripts in src/scripts/ are their own entry points and never call initWallet,
- * so loading is lazy on first use as well. Runs at most once either way.
+ * The maintenance scripts in src/scripts/ are their own entry points: they never run index.ts, so
+ * nothing has unlocked the store or loaded the wallet in their process. Both happen lazily here
+ * on first use, from the same keyfile the server boots from.
  */
 function ensureInit(): void {
-  if (!initAttempted) initWallet();
+  if (initAttempted) return;
+  if (!isUnlocked()) unlockWithKeyfile();
+  initWallet();
 }
 
 export function isWalletConfigured(): boolean {
