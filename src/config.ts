@@ -79,11 +79,11 @@ export const config = {
   // Grant scoping (plan: "Bezpečnost" — never an unrestricted grant).
   grantSpendLimitUscrt: process.env.GRANT_SPEND_LIMIT_USCRT ?? "1000000",
 
-  // The gas-vault contract that issues gas credits. Empty means credits cannot be sold: there is
-  // no fallback and no default, because paying SCRT into the wrong address is unrecoverable —
-  // the contract has no withdrawal. Confirmed live on secret-4 at
-  // secret1kkmu4vydkppkhzmx00glm20vn47t09544adv0g; set it explicitly anyway.
-  gasVaultAddress: process.env.GAS_VAULT_ADDRESS ?? "",
+  // The gas-vault contract that issues gas credits, defaulted per chain to a deployment that has
+  // actually been queried — not to one address for every network. SCRT paid into the wrong
+  // contract does not come back, because the vault has no withdrawal and nor does a mistake, so
+  // a chain with no confirmed deployment gets nothing rather than a neighbour's address.
+  gasVaultAddress: envOrUndefined("GAS_VAULT_ADDRESS") ?? defaultGasVault(process.env.CHAIN_ID ?? "secretdev-1"),
 
   // How much gas credit one purchase buys, and the ceiling on a client-requested amount. The
   // provider has to hold native SCRT to cover whatever it sells, so this is also what caps how
@@ -145,6 +145,24 @@ export const config = {
   dbPath: process.env.DB_PATH ?? "./provider.sqlite3",
   port: Number(process.env.PORT ?? 8787),
 };
+
+/**
+ * Known gas-vault deployments.
+ *
+ * secret-4 verified 2026-09-20: code id 2611, and holding the allowances it has issued.
+ * pulsar-3 is the one in `jirkacepelka/fee-granter`, which is where both were deployed from.
+ * Anything else — a devnet, a fork — has to be told, because there is nothing to guess at.
+ */
+function defaultGasVault(chainId: string): string {
+  switch (chainId) {
+    case "secret-4":
+      return "secret1kkmu4vydkppkhzmx00glm20vn47t09544adv0g";
+    case "pulsar-3":
+      return "secret16wmu0cy4ukh2g50qt7n0q62esmcz62sgrz0h8f";
+    default:
+      return "";
+  }
+}
 
 function requiredInProd(name: string, devnetDefault: string): string {
   return envOrUndefined(name) ?? (process.env.NODE_ENV === "production" ? required(name) : devnetDefault);
