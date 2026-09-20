@@ -9,11 +9,11 @@
 # move, and an attestation that says "it booted whatever :latest was" proves nothing at all.
 # Update the digest deliberately, as its own commit, and expect the app id to change with it.
 #
-#   ghcr.io/nieuport-labs/private-gas-server@sha256:2a11783e... == commit c11bf5a
+#   ghcr.io/nieuport-labs/private-gas-server@sha256:a6f4c698... == commit 862b595
 #
 services:
   sscrt-provider:
-    image: ghcr.io/nieuport-labs/private-gas-server@sha256:2a11783e10e4a129a59bfd2e0f82a6529b4fbfa1105f6124aaa027e5237f4f0c
+    image: ghcr.io/nieuport-labs/private-gas-server@sha256:a6f4c698c3ec550d675b813d0285cc8fb1a24df282134457f244eb226f6fb8e0
     restart: unless-stopped
     volumes:
       # How the container reaches the dstack guest agent: the attestation quote, the app id and
