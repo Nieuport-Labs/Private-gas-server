@@ -1,0 +1,44 @@
+# The provider, as a confidential VM on Phala Cloud.
+#
+# Separate from docker-compose.yml because the two are answering different questions. That one
+# builds from this checkout for a machine you already control. This one is the thing attestation
+# is *about*: dstack hashes this file and the hash becomes the application's identity, so a
+# client that verifies the attestation is verifying exactly what is written here.
+#
+# Which is why the image is pinned by digest and not by tag. A tag is a pointer somebody can
+# move, and an attestation that says "it booted whatever :latest was" proves nothing at all.
+# Update the digest deliberately, as its own commit, and expect the app id to change with it.
+#
+#   ghcr.io/nieuport-labs/private-gas-server@sha256:dfde0857... == commit 053f711
+#
+services:
+  sscrt-provider:
+    image: ghcr.io/nieuport-labs/private-gas-server@sha256:dfde08577e4fea579f19a30af9bc9d1a7d2d189698a1025bc9326025d15a09af
+    restart: unless-stopped
+    volumes:
+      # How the container reaches the dstack guest agent: the attestation quote, the app id and
+      # the compose hash all come through here. Without it /attestation answers 501 and the
+      # whole point of running in a CVM is lost.
+      - /var/run/dstack.sock:/var/run/dstack.sock
+      # Encrypted by dstack, with a key derived from the app and instance identity and released
+      # by KMS only after attestation. That is what makes it safe to keep the provider's
+      # mnemonic and users' permits here rather than in memory.
+      - provider-data:/data
+    environment:
+      - NODE_ENV=production
+      - DB_PATH=/data/provider.sqlite3
+      - PORT=8787
+      - CHAIN_ID=secret-4
+      - LCD_URL=https://lcd-secret.keplr.app
+      - SSCRT_CONTRACT=secret1k0jntykt7e4g3y88ltc60czgjuqdy4c9e8fzek
+      - NATIVE_GAS_PRICE_USCRT=0.1
+      # GAS_VAULT_ADDRESS is left unset: config.ts defaults it per chain to the deployment that
+      # has been queried, and naming it twice is a way for the two to disagree.
+      #
+      # ADMIN_PASSWORD is supplied at deploy time as an encrypted environment variable, never
+      # written here. This file is public, and its hash is the app's identity.
+    ports:
+      - "8787:8787"
+
+volumes:
+  provider-data:

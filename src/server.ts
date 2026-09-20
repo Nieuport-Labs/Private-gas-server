@@ -28,6 +28,7 @@ import { outstandingPurchases, deliverPending, requeuePurchase, closePurchase } 
 import { queryVaultStatus, GasVaultError } from "./gasVault.js";
 import { defaultPurchase, CreditSaleError } from "./creditSale.js";
 import { purgeLegacyData, describeLegacyData } from "./dataPurge.js";
+import { getAttestation, attestationAvailable } from "./attestation.js";
 import { RateLimiter } from "./rateLimit.js";
 import { getLastAutoUnwrap } from "./autoUnwrap.js";
 import { db } from "./db.js";
@@ -149,6 +150,43 @@ export function buildServer() {
 
   app.get("/", async (_req, reply) => reply.type("text/html").send(dashboardHtml));
 
+  /**
+   * What is actually running here, signed by the hardware rather than asserted by the operator.
+   *
+   * Public and unauthenticated on purpose: it is meant to be called by a client deciding whether
+   * to trust this server at all, which is a decision it has to be able to make before it has
+   * any relationship with it.
+   *
+   * The nonce is required. A quote without one proves that this image ran somewhere at some
+   * point, which is not the question -- the question is whether the thing answering right now is
+   * that image.
+   */
+  app.get<{ Querystring: { nonce?: string } }>("/attestation", async (req, reply) => {
+    if (!ipLimiter.allow(req.ip)) {
+      return reply.status(429).send({ error: "rate_limited", message: "rate limit exceeded for this IP" });
+    }
+    const nonce = String(req.query?.nonce ?? "").trim();
+    if (!/^[A-Za-z0-9_-]{16,128}$/.test(nonce)) {
+      return reply.status(400).send({
+        error: "bad_nonce",
+        message: "nonce is required: 16-128 characters of [A-Za-z0-9_-], freshly random per request",
+      });
+    }
+
+    const attestation = await getAttestation(nonce);
+    if (!attestation) {
+      // Not a failure to hide. A client that wanted a verified server should now refuse to send
+      // it anything, and it can only do that if this says so.
+      return reply.status(501).send({
+        error: "no_attestation",
+        message:
+          "this provider is not running in a confidential VM, so it cannot prove what it is " +
+          "running — treat anything it says about deleting your permit as a promise",
+      });
+    }
+    return reply.send(attestation);
+  });
+
   app.get("/status", async (req, reply) => {
     // The IP limiter exists to stop anonymous callers making this server do chain queries for
     // free. A signed-in operator is not that: their dashboard polls every 2s while a maintenance
@@ -178,6 +216,9 @@ export function buildServer() {
       // vault directly and never call anything here.
       gasVaultAddress: settings.gasVaultAddress,
       creditsForSale: settings.gasVaultAddress ? safeDefaultPurchase() : null,
+      // Whether /attestation will answer. A client that cares should still call it rather than
+      // believe this flag, which is the server talking about itself.
+      attestable: await attestationAvailable(),
       config: {
         feeMarkupPercent: settings.feeMarkupPercent,
         autoUnwrap: {
