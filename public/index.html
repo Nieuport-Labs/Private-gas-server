@@ -615,8 +615,13 @@
       </p>
       <div class="field">
         <label for="calib-samples">Samples</label>
-        <input type="number" id="calib-samples" min="3" max="20" value="10" />
-        <div class="hint">Roughly 0.02 SCRT of gas per sample at the current price.</div>
+        <input type="number" id="calib-samples" min="3" max="20" value="3" />
+        <div class="hint">
+          Roughly 0.013 SCRT of gas per sample. Three is enough: the recorded constant is the
+          <em>highest</em> sample plus 15&nbsp;%, not an average, and this message has never varied
+          by more than four gas. More samples cannot make it more accurate &mdash; they can only
+          find a higher maximum and make every quote dearer.
+        </div>
       </div>
       <div class="joblog hidden"></div>
     </div>
@@ -840,7 +845,7 @@
         </p>
         <div class="field">
           <label for="w-calib-samples">Samples</label>
-          <input type="number" id="w-calib-samples" min="3" max="20" value="10" />
+          <input type="number" id="w-calib-samples" min="3" max="20" value="3" />
           <div class="hint">A few will be lost to the public endpoint. At least three must succeed.</div>
         </div>
         <div class="row" style="margin-bottom: 0.8rem;">
@@ -1100,7 +1105,7 @@
       "Wrap " + typed + " SCRT into sSCRT? This is a real transaction and costs gas.");
   }
   function calibrateAction(inputId) {
-    var samples = Number($(inputId).value) || 10;
+    var samples = Number($(inputId).value) || 3;
     startJob("/admin/calibrate", { samples: samples },
       "Run calibration? This sends " + samples + " real transactions and spends gas on each.");
   }

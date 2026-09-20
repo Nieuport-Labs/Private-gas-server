@@ -350,7 +350,7 @@ export function buildServer() {
   });
 
   app.post<{ Body: { samples?: number } }>("/admin/calibrate", async (req, reply) => {
-    const samples = Number(req.body?.samples ?? 10);
+    const samples = Number(req.body?.samples ?? 3);
     if (!Number.isInteger(samples) || samples < 1 || samples > 50) {
       return reply.status(400).send({ error: "bad_request", message: "samples must be a whole number between 1 and 50" });
     }
