@@ -1,16 +1,16 @@
-// Proves the Fastify HTTP layer itself, not just the underlying functions: every other smoke
-// test in this directory calls onboardUser/requestQuote/submitQuote directly in-process. This
-// one talks to a running server (`npm run dev` or `npm start`) over real HTTP, exactly the way
-// an eventual dApp client would, including the wire format for messages (messageRegistry.ts)
-// and base64-encoded signed tx bytes.
+// Proves the Fastify HTTP layer itself, not just the underlying functions: the other smoke tests
+// call onboardUser/requestPurchaseQuote/submitQuote directly in-process. This one talks to a
+// running server (`npm run dev` or `npm start`) over real HTTP, exactly the way the browser app
+// does, including base64-encoded signed tx bytes and polling for delivery.
 //
 // Usage: start the server first (`npm run dev`), then run this against it.
-import { MsgSend, MsgExecuteContract, SecretNetworkClient, Wallet } from "secretjs";
+import { MsgExecuteContract, SecretNetworkClient, Wallet } from "secretjs";
 import { config } from "../config.js";
 import { getSscrtCodeHash, getProviderAddress, getProviderClient } from "../chain.js";
+import { getSettings } from "../settings.js";
+import { quotedMessages } from "./quotedSigning.js";
 
 const BASE_URL = process.env.PROVIDER_URL ?? "http://localhost:8787";
-const RECIPIENT = "secret1ap26qrlp8mcq2pg6r47w43l0y8zkqm8a450s03";
 
 async function main() {
   const health = await fetch(`${BASE_URL}/health`).then((r) => r.json());
@@ -42,43 +42,35 @@ async function main() {
         sender: getProviderAddress(),
         contract_address: config.sscrtContract,
         code_hash: codeHash,
-        msg: { transfer: { recipient: address, amount: "1000000" } },
+        msg: {
+          transfer: {
+            recipient: address,
+            amount: (BigInt(getSettings().creditPurchaseUscrt) * 2n).toString(),
+          },
+        },
       }),
     ],
-    { gasLimit: 200_000, gasPriceInFeeDenom: 0.25 },
+    { gasLimit: 200_000, gasPriceInFeeDenom: config.nativeGasPriceUscrt },
   );
-  await getProviderClient().tx.bank.send(
-    { from_address: getProviderAddress(), to_address: address, amount: [{ denom: "uscrt", amount: "10" }] },
-    { gasLimit: 100_000, gasPriceInFeeDenom: 0.25 },
-  );
-  console.log("funded with sSCRT + a little uscrt");
+  console.log("funded with sSCRT and zero native SCRT");
 
   const onboardResp = await postJson("/onboard", { address, permit });
   console.log("POST /onboard:", onboardResp);
 
   const pubkeyBase64 = Buffer.from((await wallet.getAccounts())[0].pubkey).toString("base64");
-  const nativeMsgParams = { from_address: address, to_address: RECIPIENT, amount: [{ denom: "uscrt", amount: "1" }] };
 
-  const quote = await postJson("/quote", {
-    address,
-    pubkeyBase64,
-    messages: [{ typeUrl: "/cosmos.bank.v1beta1.MsgSend", value: nativeMsgParams }],
-  });
-  console.log("POST /quote:", quote);
+  const quote = await postJson("/purchase/quote", { address, pubkeyBase64 });
+  console.log("POST /purchase/quote:", quote);
   if (quote.error) throw new Error(`quote failed: ${quote.error}: ${quote.message}`);
 
-  // Stand-in for the client's own wallet signing exactly what the quote specified.
-  const nativeMsg = new MsgSend(nativeMsgParams);
-  const paymentMsg = new MsgExecuteContract({
-    sender: address,
-    contract_address: config.sscrtContract,
-    code_hash: codeHash,
-    msg: { transfer: { recipient: getProviderAddress(), amount: quote.sscrtPaymentAmount } },
-  });
-  const signedBytes = await userClient.tx.signTx([nativeMsg, paymentMsg], {
+  // The client signs the server's bytes as they are. Rebuilding the message locally would
+  // re-encrypt with a fresh nonce and be rejected by txVerify -- which is the intended behaviour,
+  // so a test that did it would be testing the wrong thing.
+  const signedBytes = await userClient.tx.signTx(quotedMessages(quote), {
     gasLimit: quote.gasLimit,
+    gasPriceInFeeDenom: Number(quote.feeAmountUscrt) / quote.gasLimit,
     feeDenom: "uscrt",
-    feeGranter: getProviderAddress(),
+    feeGranter: quote.feeGranter,
     explicitSignerData: {
       accountNumber: quote.accountNumber,
       sequence: quote.sequence,
@@ -94,7 +86,17 @@ async function main() {
   if (submitResp.error) throw new Error(`submit failed: ${submitResp.error}: ${submitResp.message}`);
   if (submitResp.code !== 0) throw new Error(`FAILED: tx landed with non-zero code ${submitResp.code}`);
 
-  console.log(`OK: full HTTP onboard -> quote -> submit loop passed, provider reimbursed ${submitResp.sscrtReceived} sSCRT`);
+  // Delivery is a second transaction, so the client polls rather than assuming.
+  const delivery = await fetch(`${BASE_URL}/purchase/${quote.quoteId}`).then((r) => r.json());
+  console.log(`GET /purchase/${quote.quoteId}:`, delivery);
+  if (delivery.state !== "delivered") {
+    throw new Error(`FAILED: credits not delivered (state ${delivery.state}: ${delivery.lastError ?? "no error given"})`);
+  }
+
+  console.log(
+    `OK: HTTP onboard -> purchase/quote -> submit -> delivery passed. Provider received ` +
+      `${submitResp.sscrtReceived} sSCRT, buyer received ${submitResp.creditsUscrt} uscrt of credits.`,
+  );
 
   async function postJson(path: string, body: unknown): Promise<any> {
     const resp = await fetch(`${BASE_URL}${path}`, {

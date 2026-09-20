@@ -1,36 +1,34 @@
-// Onboarding, in two stages, and why it is two.
+// Onboarding: the one moment a gas provider is involved at all.
 //
-// A fee grant is what lets an address with no SCRT transact at all, and issuing one costs the
-// provider a transaction. Handing them out on request is therefore something anyone can make the
-// provider pay for, once per address they invent — the one exposure in this design that scales
-// without limit.
+// A wallet holding only sSCRT cannot pay a fee, and buying gas credits is itself a transaction,
+// so it cannot buy its way out. Breaking that deadlock needs somebody else to pay for exactly one
+// transaction. That is all this does.
 //
-// The answer is a non-refundable security deposit (see deposits.ts), collected before an address
-// can do anything else. But the user cannot pay it up front: sending sSCRT needs gas, and having
-// no gas is why they are here. So the deposit rides inside the first sponsored transaction, and
-// the grant has to be split:
+//   1. `onboardUser` — keeps the permit, issues nothing, spends nothing. It reads the balance
+//      through that permit and refuses an address that could not pay for credits anyway. This is
+//      the real defence: an attacker has to park a genuine balance in every address before the
+//      provider spends a single uscrt on one.
+//   2. `issueBootstrapGrant` — called by the first quote: enough for one sponsored transaction,
+//      restricted to the one message type that transaction contains, and expiring in minutes. It
+//      cannot be sized to that quote's exact fee, because issuing the grant is also what creates
+//      the grantee's account.
 //
-//   1. `onboardUser` — keeps the permit, issues nothing, spends nothing. It reads the address's
-//      balance through that permit and refuses an address that could not pay the deposit anyway.
-//      This is the real defence: an attacker has to park a genuine balance in every address
-//      before the provider spends a single uscrt on it.
-//   2. `issueBootstrapGrant` — called by the first quote, capped at `bootstrapGrantUscrt`: enough
-//      for one sponsored transaction and no more. It cannot be sized to that quote's exact fee,
-//      because issuing the grant is also what creates the grantee's account, and the simulation
-//      the fee is derived from cannot run against an account that does not exist yet.
-//   3. `ensureFullGrant` — once the deposit has landed, replaces the grant with one at the full
-//      spend limit.
+// There is no third stage any more. The old design raised the grant to a full spend limit so the
+// provider could keep sponsoring; now the buyer leaves with credits and pays their own fees from
+// the vault, so the bootstrap grant has nothing left to become. Whatever it has left over is
+// abandoned rather than revoked — reclaiming it would cost another transaction worth more than
+// the remainder, which is why the expiry is short.
 //
-// Step 3 is a replacement, not an increase. A second MsgGrantAllowance for an existing pair is
-// rejected with "fee allowance already exists", and the SDK has no update message — but a revoke
-// and a grant in a single transaction work, which keeps it atomic and leaves no moment where the
-// user holds no grant at all.
-import { MsgGrantAllowance, MsgRevokeAllowance, type MsgGrantAllowanceParams } from "secretjs";
+// The permit is deleted the moment the credits are delivered (see creditDelivery.ts). It bought
+// one thing, the balance check above, and that need genuinely ends rather than merely going
+// quiet.
+import { type MsgGrantAllowanceParams } from "secretjs";
 import { config } from "./config.js";
 import { getProviderClient, getProviderAddress, readClient, getSscrtCodeHash } from "./chain.js";
 import { db } from "./db.js";
 import type { Permit } from "secretjs";
 import { getSettings } from "./settings.js";
+import { defaultPurchase } from "./creditSale.js";
 
 export class OnboardError extends Error {
   constructor(
@@ -44,16 +42,26 @@ export class OnboardError extends Error {
 // Measured across every grant this provider has issued: 14907-17633 gas. Cosmos charges the
 // limit, not the usage.
 const GRANT_GAS_LIMIT = 26_000;
-// The revoke and the grant together simulate at 17356.
-const REGRANT_GAS_LIMIT = 30_000;
+
+/**
+ * The bootstrap grant pays for one message and no other kind.
+ *
+ * `AllowedMsgAllowance` cannot restrict which *contract* is called — the SDK filters by message
+ * type only — so this does not pin the grant to the sSCRT transfer specifically. What pins that
+ * is txVerify.ts, which compares the signed bytes against the quote. This narrowing is the cheap
+ * half: it means a leaked grant cannot be spent on staking, voting or a bank send.
+ */
+const BOOTSTRAP_ALLOWED_MESSAGES = ["/secret.compute.v1beta1.MsgExecuteContract"];
 
 export interface OnboardResult {
   address: string;
-  /** Collected once, inside the first sponsored transaction, and not refundable. It is not spent
-   * on ordinary usage — only a failed transaction draws on it. */
-  securityDepositSscrt: string;
+  /** What one purchase of gas credits costs, in sSCRT base units. */
+  creditPriceSscrt: string;
+  /** What it buys, in uscrt of fee allowance. */
+  creditsUscrt: string;
   sscrtBalance: string;
-  grantSpendLimitUscrt: string;
+  /** The vault the allowance comes from — what the buyer sets as `fee.granter` afterwards. */
+  gasVaultAddress: string;
 }
 
 export interface GrantRow {
@@ -76,7 +84,12 @@ function toProtoTimestamp(date: Date) {
   return { seconds: String(Math.floor(ms / 1000)), nanos: (ms % 1000) * 1e6 };
 }
 
-function allowanceParams(address: string, spendLimitUscrt: string, expiresAt: Date): MsgGrantAllowanceParams {
+function allowanceParams(
+  address: string,
+  spendLimitUscrt: string,
+  expiresAt: Date,
+  allowedMessages: string[],
+): MsgGrantAllowanceParams {
   return {
     granter: getProviderAddress(),
     grantee: address,
@@ -85,7 +98,7 @@ function allowanceParams(address: string, spendLimitUscrt: string, expiresAt: Da
         spend_limit: [{ denom: "uscrt", amount: spendLimitUscrt }],
         expiration: toProtoTimestamp(expiresAt) as any,
       },
-      allowed_messages: config.allowedMessageTypes,
+      allowed_messages: allowedMessages,
     },
   };
 }
@@ -112,7 +125,7 @@ function saveGrant(
     address,
     spendLimitUscrt,
     expiresAt.toISOString(),
-    JSON.stringify(config.allowedMessageTypes),
+    JSON.stringify(BOOTSTRAP_ALLOWED_MESSAGES),
     txHash,
     stage,
     feeCollected ? 1 : 0,
@@ -126,16 +139,13 @@ function saveGrant(
  */
 export async function onboardUser(address: string, permit: Permit): Promise<OnboardResult> {
   const settings = getSettings();
-  const deposit = BigInt(settings.securityDepositUscrt);
+  const sale = defaultPurchase();
   const balance = BigInt(await readBalanceWithPermit(permit));
 
-  // A typical sponsored transaction on top of the deposit, so the first quote is not refused
-  // straight after onboarding has said yes.
-  const headroom = deposit / 10n;
-  if (balance < deposit + headroom) {
+  if (balance < BigInt(sale.priceSscrt)) {
     throw new OnboardError(
-      `sSCRT balance too low to onboard: have ${balance}, need at least ${deposit + headroom} ` +
-        `(a one-off security deposit of ${deposit}, collected with your first transaction, plus gas)`,
+      `sSCRT balance too low to buy gas credits: have ${balance}, need ${sale.priceSscrt} ` +
+        `for ${sale.creditsUscrt} uscrt of credits`,
       "insufficient_balance",
     );
   }
@@ -147,24 +157,29 @@ export async function onboardUser(address: string, permit: Permit): Promise<Onbo
 
   return {
     address,
-    securityDepositSscrt: settings.securityDepositUscrt,
+    creditPriceSscrt: sale.priceSscrt,
+    creditsUscrt: sale.creditsUscrt,
     sscrtBalance: balance.toString(),
-    grantSpendLimitUscrt: settings.grantSpendLimitUscrt,
+    gasVaultAddress: settings.gasVaultAddress,
   };
 }
 
 /**
- * Stage 2. A grant covering exactly one transaction — this one. If the user never pays, that is
- * the whole loss, and the address is spent.
+ * Stage 2. A grant covering exactly one transaction — this one. If the buyer never pays, that is
+ * the whole loss (~0.0026 SCRT), and the address is spent: `getStoredGrant` finding a row is what
+ * stops a second grant going to an address that has not used its first.
  */
 export async function issueBootstrapGrant(address: string, feeUscrt: string): Promise<void> {
-  const expiresAt = new Date(Date.now() + getSettings().grantExpirySeconds * 1000);
+  const expiresAt = new Date(Date.now() + getSettings().bootstrapGrantExpirySeconds * 1000);
   try {
-    const tx = await getProviderClient().tx.feegrant.grantAllowance(allowanceParams(address, feeUscrt, expiresAt), {
-      gasLimit: GRANT_GAS_LIMIT,
-      gasPriceInFeeDenom: config.nativeGasPriceUscrt,
-      feeDenom: "uscrt",
-    });
+    const tx = await getProviderClient().tx.feegrant.grantAllowance(
+      allowanceParams(address, feeUscrt, expiresAt, BOOTSTRAP_ALLOWED_MESSAGES),
+      {
+        gasLimit: GRANT_GAS_LIMIT,
+        gasPriceInFeeDenom: config.nativeGasPriceUscrt,
+        feeDenom: "uscrt",
+      },
+    );
     if (tx.code !== 0) throw new Error(`bootstrap grant failed (code ${tx.code}): ${tx.rawLog}`);
     saveGrant(address, feeUscrt, expiresAt, tx.transactionHash, "bootstrap", false);
   } catch (err) {
@@ -196,46 +211,6 @@ async function adoptExistingGrant(address: string): Promise<void> {
   saveGrant(address, limit, expiration ? new Date(expiration) : new Date(Date.now() + 86_400_000), "adopted", "full", true);
 }
 
-/** Records that the security deposit arrived, so the grant may be raised. */
-export function markFeeCollected(address: string): void {
-  db.prepare(`UPDATE grants SET fee_collected = 1 WHERE address = ?`).run(address);
-}
-
-/**
- * Stage 3. Replaces a bootstrap grant with the full spend limit, in one transaction.
- *
- * Safe to call repeatedly and safe to fail: it returns false rather than throwing, because every
- * caller reaches it *after* the user's transaction has already succeeded, and a bookkeeping step
- * must never turn a completed transaction into an error. A failure here simply leaves the address
- * on its bootstrap grant, and the next quote tries again.
- */
-export async function ensureFullGrant(address: string): Promise<boolean> {
-  const grant = getStoredGrant(address);
-  if (!grant || grant.stage === "full" || !grant.fee_collected) return false;
-
-  const settings = getSettings();
-  const expiresAt = new Date(Date.now() + settings.grantExpirySeconds * 1000);
-  const granter = getProviderAddress();
-
-  try {
-    // Revoke and grant in one transaction. Two separate transactions would leave a window in
-    // which the address holds no grant at all, and a quote issued in that window would produce a
-    // transaction the chain refuses at ante.
-    const tx = await getProviderClient().tx.broadcast(
-      [
-        new MsgRevokeAllowance({ granter, grantee: address }),
-        new MsgGrantAllowance(allowanceParams(address, settings.grantSpendLimitUscrt, expiresAt)),
-      ],
-      { gasLimit: REGRANT_GAS_LIMIT, gasPriceInFeeDenom: config.nativeGasPriceUscrt, feeDenom: "uscrt" },
-    );
-    if (tx.code !== 0) return false;
-    saveGrant(address, settings.grantSpendLimitUscrt, expiresAt, tx.transactionHash, "full", true);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 async function readBalanceWithPermit(permit: Permit): Promise<string> {
   const codeHash = await getSscrtCodeHash();
   const result = (await readClient.query.compute.queryContract({
@@ -244,6 +219,18 @@ async function readBalanceWithPermit(permit: Permit): Promise<string> {
     query: { with_permit: { permit, query: { balance: {} } } },
   })) as { balance?: { amount?: string } };
   return result?.balance?.amount ?? "0";
+}
+
+/**
+ * Forget an address's permit.
+ *
+ * Called once the credits are delivered, because that is when the reason for holding it ends.
+ * This is a promise, not a proof — SNIP-24 has no expiry, so the signature itself stays valid
+ * until the holder revokes it on the contract. Anyone who wants that guaranteed rather than
+ * undertaken should revoke; the app offers a button for it.
+ */
+export function deletePermit(address: string): void {
+  db.prepare(`DELETE FROM permits WHERE address = ?`).run(address);
 }
 
 export function getStoredPermit(address: string): Permit | null {

@@ -439,10 +439,17 @@
       </div>
       <div class="oprow">
         <div class="txt">
-          <div class="t">Calibrate contract gas</div>
-          <div class="d" id="contract-calib-summary">Each whitelisted contract needs its own constant before it can be quoted</div>
+          <div class="t">Deliver outstanding credits</div>
+          <div class="d" id="deliver-summary">Purchases paid for and not yet delivered</div>
         </div>
-        <button class="btn job-btn" id="btn-calibrate-contract">Calibrate</button>
+        <button class="btn" id="btn-deliver">Deliver</button>
+      </div>
+      <div class="oprow">
+        <div class="txt">
+          <div class="t">Delete old data</div>
+          <div class="d" id="purge-summary">Permits, quotes and transaction records this server no longer needs</div>
+        </div>
+        <button class="btn" id="btn-purge">Delete</button>
       </div>
     </div>
 
@@ -464,8 +471,22 @@
         <tr><td>sSCRT contract</td><td id="kv-sscrt">&mdash;</td></tr>
         <tr><td>Auto-unwrap</td><td id="kv-unwrap">&mdash;</td></tr>
         <tr><td>Last auto-unwrap</td><td id="kv-last-unwrap">&mdash;</td></tr>
-        <tr><td>Security deposits held</td><td id="kv-deposits">&mdash;</td></tr>
+        <tr><td>Gas vault</td><td id="kv-vault">&mdash;</td></tr>
+        <tr><td>Credits outstanding at the vault</td><td id="kv-vault-balance">&mdash;</td></tr>
+        <tr><td>Credits sold</td><td id="kv-sales">&mdash;</td></tr>
       </table>
+    </div>
+
+    <div id="outstanding-panel" class="hidden">
+      <h2>Owed</h2>
+      <div class="panel">
+        <p class="muted" style="margin-top: 0;">
+          Paid for and not yet delivered. These are the only rows here that still carry a buyer's
+          address, and each one disappears the moment its credits land &mdash; so a list that
+          stays is a problem, not a normal state.
+        </p>
+        <table class="kv" id="outstanding-table"></table>
+      </div>
     </div>
 
     <footer class="muted" id="footer" style="margin-top: 1.5rem;">loading&hellip;</footer>
@@ -607,42 +628,6 @@
   </div>
 </div>
 
-<!-- ============ MODAL: calibrate a whitelisted contract ============ -->
-<div class="overlay" id="m-calib-contract">
-  <div class="modal">
-    <header><h3>Calibrate contract gas</h3><button class="icon-btn" data-close>&#10005;</button></header>
-    <div class="modal-body">
-      <p class="muted" style="margin-top: 0;">
-        Same measurement as the payment message, for one whitelisted contract. The call runs as
-        the provider's own account, so it has to be one that would actually succeed for that
-        address &mdash; and it should be shaped like the most expensive call you intend to
-        sponsor, because the single recorded constant has to cover all of them.
-      </p>
-      <div class="field">
-        <label for="cc-contract">Contract</label>
-        <select id="cc-contract"></select>
-        <div class="hint" id="cc-state">&mdash;</div>
-      </div>
-      <div class="field">
-        <label for="cc-msg">Sample execute message (JSON)</label>
-        <textarea id="cc-msg" rows="3" spellcheck="false" class="mono"></textarea>
-        <div class="hint" id="cc-msg-hint">The message body only, without sender or contract address.</div>
-      </div>
-      <div class="field">
-        <label for="cc-samples">Samples</label>
-        <input type="number" id="cc-samples" min="3" max="20" value="5" />
-        <div class="hint">Roughly 0.04 SCRT of gas per sample. At least three have to succeed.</div>
-      </div>
-      <div class="joblog hidden"></div>
-    </div>
-    <div class="modal-foot">
-      <span class="msg job-status"></span>
-      <button class="btn ghost" data-close>Close</button>
-      <button class="btn primary job-btn" id="cc-run">Run</button>
-    </div>
-  </div>
-</div>
-
 <!-- ============ MODAL: settings ============ -->
 <div class="overlay" id="m-settings">
   <div class="modal wide">
@@ -670,13 +655,12 @@
         <input type="text" id="grant-limit" inputmode="decimal" class="mono" />
       </div>
       <div class="field">
-        <label for="security-deposit">Security deposit (sSCRT)</label>
-        <input type="text" id="security-deposit" inputmode="decimal" class="mono" />
+        <label for="credit-purchase">Credits sold per purchase (SCRT)</label>
+        <input type="text" id="credit-purchase" inputmode="decimal" class="mono" />
         <div class="hint">
-          Collected once, inside a user's first sponsored transaction, and not refundable. Ordinary
-          transactions never touch it &mdash; users keep paying per transaction. It is drawn on
-          only when a transaction fails, where the chain takes the fee but reverts the payment, and
-          the shortfall is collected back inside that user's next transaction.
+          How much gas credit one purchase buys, and the ceiling on what a client may request.
+          The provider pays this into the vault out of its own native SCRT, so it is also how
+          fast one caller can draw that reserve down.
         </div>
       </div>
       <div class="field">
@@ -692,9 +676,20 @@
         <input type="text" id="grant-expiry" inputmode="numeric" class="mono" />
       </div>
       <div class="field">
-        <label for="whitelist">Whitelisted contracts</label>
-        <textarea id="whitelist" rows="2" spellcheck="false" class="mono"></textarea>
-        <div class="hint">Comma-separated. Each one needs its own gas calibration before it can be quoted.</div>
+        <label for="gas-vault">Gas vault contract</label>
+        <input type="text" id="gas-vault" spellcheck="false" class="mono" />
+        <div class="hint">
+          Where credits are bought from. Leave it empty to stop selling. Check it before saving:
+          the vault has no withdrawal, so SCRT paid to the wrong address does not come back.
+        </div>
+      </div>
+      <div class="field">
+        <label for="bootstrap-expiry">First grant expiry (seconds)</label>
+        <input type="text" id="bootstrap-expiry" inputmode="numeric" class="mono" />
+        <div class="hint">
+          Short on purpose. The first grant covers one purchase, and an unused one is left to
+          expire rather than revoked &mdash; reclaiming it costs more than it is worth.
+        </div>
       </div>
 
       <hr style="border: none; border-top: 1px solid var(--line); margin: 1.4rem 0;" />
@@ -921,8 +916,8 @@
     return out.replace(/0+$/, "").replace(/\.$/, "");
   }
 
-  function fmtScrt(uscrt) {
-    return (Number(uscrt) / 1e6).toLocaleString(undefined, { maximumFractionDigits: 6 }) + " SCRT";
+  function fmtScrt(uscrt, denom) {
+    return (Number(uscrt) / 1e6).toLocaleString(undefined, { maximumFractionDigits: 6 }) + " " + (denom || "SCRT");
   }
   function shortAddr(a) {
     return a ? a.slice(0, 12) + "…" + a.slice(-6) : "";
@@ -1117,87 +1112,96 @@
   $("w-wrap-run").onclick = function () { wrapAction("w-wrap-amount"); };
   $("w-calib-run").onclick = function () { calibrateAction("w-calib-samples"); };
 
-  // ---------- contract gas calibration ----------
-  // Whitelisting a contract and measuring its gas are two halves of one setup step. Until both
-  // are done /quote refuses with contract_gas_not_calibrated, which the operator would otherwise
-  // only find out about as a user-facing failure.
-  var ccMsgDirty = false;
-  $("cc-msg").addEventListener("input", function () { ccMsgDirty = true; });
+  // ---------- credit delivery, and deleting what is no longer needed ----------
+  // A paid-for, undelivered purchase is money the provider owes, so it gets a button rather than
+  // a number. Two separate actions per row on purpose: "retry" says try again, "close" says do
+  // not -- and getting those the wrong way round either grants twice or never.
+  function renderOutstanding() {
+    var rows = (state && state.outstanding) || [];
+    $("outstanding-panel").classList.toggle("hidden", rows.length === 0);
+    $("deliver-summary").textContent =
+      rows.length === 0 ? "Nothing outstanding" : rows.length + " paid for and not yet delivered";
+    $("deliver-summary").style.color = rows.length > 0 ? "var(--warn)" : "";
+    if (rows.length === 0) return;
 
-  function whitelistedContracts() {
-    return (state && state.settings && state.settings.allowedContractAddresses) || [];
+    var table = $("outstanding-table");
+    table.innerHTML = "";
+    rows.forEach(function (row) {
+      var tr = document.createElement("tr");
+      var what = document.createElement("td");
+      what.innerHTML =
+        '<span class="mono">' + row.address + "</span><br>" +
+        toScrt(row.credits_uscrt) + " SCRT of credits, paid " + toScrt(row.sscrt_paid) + " sSCRT" +
+        '<br><span class="muted">' + row.state + ", attempt " + row.attempts +
+        (row.last_error ? " — " + row.last_error : "") + "</span>";
+      var actions = document.createElement("td");
+      var retry = document.createElement("button");
+      retry.className = "btn";
+      retry.textContent = "Retry";
+      retry.onclick = function () { purchaseAction("/admin/purchase/requeue", row.quote_id); };
+      var close = document.createElement("button");
+      close.className = "btn ghost";
+      close.textContent = "Close";
+      close.onclick = function () {
+        if (!confirm("Close this purchase without delivering? Only do this if you have confirmed on chain that the credits arrived, or you are writing it off.")) return;
+        purchaseAction("/admin/purchase/close", row.quote_id);
+      };
+      actions.appendChild(retry);
+      actions.appendChild(close);
+      tr.appendChild(what);
+      tr.appendChild(actions);
+      table.appendChild(tr);
+    });
   }
 
-  function fillContractCalib() {
-    var list = whitelistedContracts();
-    var select = $("cc-contract");
-    var signature = list.join(",");
-    // Rebuilt only when the whitelist itself changes — /status polls every few seconds, and
-    // repopulating on every poll would reset the operator's selection mid-edit.
-    if (select.getAttribute("data-signature") !== signature) {
-      var current = select.value;
-      select.innerHTML = "";
-      list.forEach(function (address) {
-        var option = document.createElement("option");
-        option.value = address;
-        option.textContent = address;
-        select.appendChild(option);
-      });
-      select.setAttribute("data-signature", signature);
-      if (list.indexOf(current) !== -1) select.value = current;
-    }
-
-    var constants = (state && state.contractGasConstants) || {};
-    var missing = list.filter(function (address) { return !constants[address]; });
-    var summary = $("contract-calib-summary");
-    if (list.length === 0) summary.textContent = "No contracts whitelisted yet";
-    else if (missing.length === 0) summary.textContent = list.length + " whitelisted, all calibrated";
-    else summary.textContent = missing.length + " of " + list.length + " whitelisted contracts still need a constant";
-    summary.style.color = missing.length > 0 ? "var(--warn)" : "";
-
-    ccUpdateSelection();
+  function purchaseAction(path, quoteId) {
+    api(path, { quoteId: quoteId })
+      .then(function () { return refresh(); })
+      .catch(function (err) { setMsg($("footer"), err.message, "err"); });
   }
 
-  function ccUpdateSelection() {
-    var address = $("cc-contract").value;
-    var constants = (state && state.contractGasConstants) || {};
-    var stateEl = $("cc-state");
-    if (!address) stateEl.textContent = "Whitelist a contract in Settings first";
-    else if (constants[address]) stateEl.textContent = "Currently calibrated at " + constants[address] + " gas";
-    else stateEl.textContent = "Not calibrated — quotes for this contract are refused";
-    stateEl.style.color = address && !constants[address] ? "var(--warn)" : "";
-
-    // sSCRT is the one contract whose sample message this server can write itself: a self-transfer
-    // is exactly the shape of the payment message, costs nothing net, and is what makes sending
-    // sSCRT through the provider work at all.
-    if (!ccMsgDirty && state && address && address === state.sscrtContract && state.providerAddress) {
-      $("cc-msg").value = JSON.stringify({ transfer: { recipient: state.providerAddress, amount: "1" } });
-      $("cc-msg-hint").textContent = "Prefilled: a 1 usSCRT self-transfer, the same shape as a user's payment.";
-    }
-  }
-
-  $("cc-contract").addEventListener("change", ccUpdateSelection);
-  $("btn-calibrate-contract").onclick = function () { fillContractCalib(); openModal("m-calib-contract"); };
-
-  $("cc-run").onclick = function () {
-    var address = $("cc-contract").value;
-    var samples = Number($("cc-samples").value) || 5;
-    if (!address) {
-      $$(".job-status").forEach(function (el) { setMsg(el, "whitelist a contract in Settings first", "err"); });
-      return;
-    }
-    var parsed;
-    try {
-      parsed = JSON.parse($("cc-msg").value);
-    } catch (err) {
-      $$(".job-status").forEach(function (el) {
-        setMsg(el, "the execute message is not valid JSON: " + err.message, "err");
-      });
-      return;
-    }
-    startJob("/admin/calibrate-contract", { contractAddress: address, execMsg: parsed, samples: samples },
-      "Calibrate " + address + "? This sends " + samples + " real transactions and spends gas on each.");
+  $("btn-deliver").onclick = function () {
+    api("/admin/deliver", {})
+      .then(function (result) {
+        setMsg($("deliver-summary"), "delivered " + result.delivered + ", " + result.remaining + " still outstanding", "ok");
+        return refresh();
+      })
+      .catch(function (err) { setMsg($("deliver-summary"), err.message, "err"); });
   };
+
+  function renderPurge() {
+    var d = state && state.legacyData;
+    if (!d) return;
+    var total = d.permits + d.quotes + d.txOutcomes + d.deposits + d.grants + d.contractCalibrations + d.settings;
+    $("purge-summary").textContent =
+      total === 0
+        ? "Nothing left to delete"
+        : d.permits + " permits, " + d.quotes + " quotes, " + d.txOutcomes +
+          " transaction records and " + (d.deposits + d.grants + d.contractCalibrations + d.settings) +
+          " other rows";
+  }
+
+  $("btn-purge").onclick = function () {
+    var d = (state && state.legacyData) || {};
+    if (!confirm(
+      "Delete " + (d.permits || 0) + " balance permits, " + (d.quotes || 0) + " quotes (which hold the " +
+      "recipient and amount of every transfer this server ever sponsored) and " + (d.txOutcomes || 0) +
+      " transaction records?\n\nThis cannot be undone."
+    )) return;
+    api("/admin/purge", {})
+      .then(function (result) {
+        setMsg(
+          $("purge-summary"),
+          "deleted " + result.deleted.permits + " permits, " + result.deleted.quotes + " quotes, " +
+            result.deleted.txOutcomes + " transaction records" +
+            (result.vacuumed ? "" : " — but the file could not be compacted, so the pages are still on disk"),
+          result.vacuumed ? "ok" : "err",
+        );
+        return refresh();
+      })
+      .catch(function (err) { setMsg($("purge-summary"), err.message, "err"); });
+  };
+
   $("btn-wallet").onclick = function () { openModal("m-wallet"); };
   $("btn-settings").onclick = function () { openModal("m-settings"); };
 
@@ -1231,7 +1235,7 @@
   }
 
   // ---------- settings ----------
-  ["fee-markup", "auto-unwrap-enabled", "auto-unwrap-threshold", "grant-limit", "bootstrap-grant", "security-deposit", "grant-expiry", "whitelist"]
+  ["fee-markup", "auto-unwrap-enabled", "auto-unwrap-threshold", "grant-limit", "bootstrap-grant", "credit-purchase", "grant-expiry", "bootstrap-expiry", "gas-vault"]
     .forEach(function (id) {
       $(id).addEventListener("input", function () { settingsDirty = true; });
     });
@@ -1243,9 +1247,10 @@
     $("auto-unwrap-threshold").value = toScrt(s.autoUnwrapThresholdUscrt);
     $("grant-limit").value = toScrt(s.grantSpendLimitUscrt);
     $("bootstrap-grant").value = toScrt(s.bootstrapGrantUscrt);
-    $("security-deposit").value = toScrt(s.securityDepositUscrt);
+    $("credit-purchase").value = toScrt(s.creditPurchaseUscrt);
     $("grant-expiry").value = s.grantExpirySeconds;
-    $("whitelist").value = s.allowedContractAddresses.join(", ");
+    $("bootstrap-expiry").value = s.bootstrapGrantExpirySeconds;
+    $("gas-vault").value = s.gasVaultAddress;
   }
 
   $("btn-save-settings").onclick = function () {
@@ -1255,7 +1260,7 @@
       autoUnwrapThresholdUscrt: toBase($("auto-unwrap-threshold").value),
       grantSpendLimitUscrt: toBase($("grant-limit").value),
       bootstrapGrantUscrt: toBase($("bootstrap-grant").value),
-      securityDepositUscrt: toBase($("security-deposit").value),
+      creditPurchaseUscrt: toBase($("credit-purchase").value),
     };
     for (var key in amounts) {
       if (amounts[key] === null) {
@@ -1269,9 +1274,10 @@
       autoUnwrapThresholdUscrt: amounts.autoUnwrapThresholdUscrt,
       grantSpendLimitUscrt: amounts.grantSpendLimitUscrt,
       bootstrapGrantUscrt: amounts.bootstrapGrantUscrt,
-      securityDepositUscrt: amounts.securityDepositUscrt,
+      creditPurchaseUscrt: amounts.creditPurchaseUscrt,
       grantExpirySeconds: Number($("grant-expiry").value),
-      allowedContractAddresses: $("whitelist").value.split(",").map(function (s) { return s.trim(); }).filter(Boolean)
+      bootstrapGrantExpirySeconds: Number($("bootstrap-expiry").value),
+      gasVaultAddress: $("gas-vault").value.trim()
     }).then(function () {
       settingsDirty = false;
       setMsg(msg, "saved", "ok");
@@ -1561,10 +1567,14 @@
     $("stat-calib-sub").textContent = data.paymentGasConstant ? "calibrated constant" : "quotes are refused";
     $("stat-calib-sub").style.color = data.paymentGasConstant ? "" : "var(--warn)";
     $("stat-fee").textContent = data.config.feeMarkupPercent + " %";
-    if (data.deposits) {
-      $("kv-deposits").textContent =
-        fmtScrt(data.deposits.remaining) + " across " + data.deposits.addresses +
-        (data.deposits.addresses === 1 ? " address" : " addresses");
+    $("kv-vault").textContent = data.gasVaultAddress ? shortAddr(data.gasVaultAddress) : "not set — credits cannot be sold";
+    // The vault's balance is also the sum of every allowance it still owes, so one figure says
+    // whether the credits sold are backed.
+    $("kv-vault-balance").textContent = data.vault ? fmtScrt(data.vault.balance) : "—";
+    if (data.sales) {
+      $("kv-sales").textContent =
+        data.sales.sales + (data.sales.sales === 1 ? " sale, " : " sales, ") +
+        fmtScrt(data.sales.creditsSold) + " of credits for " + fmtScrt(data.sales.sscrtReceived, "sSCRT");
     }
 
     $("wallet-desc").textContent = data.walletConfigured
@@ -1585,7 +1595,8 @@
       : "never";
 
     if (data.settings) fillSettings(data.settings);
-    fillContractCalib();
+    renderOutstanding();
+    renderPurge();
 
     var incomplete = setupIncomplete();
     $("setup-banner").classList.toggle("hidden", !incomplete);

@@ -81,12 +81,50 @@ CREATE TABLE IF NOT EXISTS settings (
   value TEXT NOT NULL,
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+
+-- A paid-for gas credit purchase that has not been delivered yet.
+--
+-- Buying credits for someone is a second transaction, signed by the provider, after theirs has
+-- landed: a single transaction cannot do both, because the SCRT paid into the vault has to come
+-- from the provider and secretjs signs for one wallet. So there is a window where the money is
+-- in and the credits are not, and this table is what closes it -- the purchase is durable before
+-- delivery is attempted, retried until it lands, and visible to the operator while it has not.
+--
+-- A row here is the only place the server keeps an address after the payment, and it is deleted
+-- the moment delivery succeeds. What survives is the amount, in sales_ledger, with no address.
+CREATE TABLE IF NOT EXISTS credit_purchases (
+  quote_id TEXT PRIMARY KEY,
+  address TEXT NOT NULL,
+  sscrt_paid TEXT NOT NULL,
+  credits_uscrt TEXT NOT NULL,       -- what the vault must grant
+  payment_tx_hash TEXT NOT NULL,
+  delivery_tx_hash TEXT,
+  state TEXT NOT NULL DEFAULT 'paid', -- paid | delivering | delivered | failed
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- What the provider earned, with no record of who from. Accounting needs the totals; it never
+-- needed the addresses, and keeping them built an index of who transacts here that the chain
+-- does not hand out nearly so conveniently.
+CREATE TABLE IF NOT EXISTS sales_ledger (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sscrt_received TEXT NOT NULL,
+  credits_sold_uscrt TEXT NOT NULL,
+  native_fee_spent_uscrt TEXT NOT NULL,
+  recorded_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `);
 
+// Kept, not dropped: it holds balances real users paid in under the previous design, and dropping
+// a table is not how that gets resolved. Nothing writes to it any more. dataPurge.ts clears it.
 db.exec(`
 CREATE TABLE IF NOT EXISTS deposits (
   address TEXT PRIMARY KEY,
-  remaining_uscrt TEXT NOT NULL,   -- how much failure this address can still absorb
+  remaining_uscrt TEXT NOT NULL,
   total_paid_uscrt TEXT NOT NULL DEFAULT '0',
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

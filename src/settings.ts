@@ -15,15 +15,18 @@ export type Settings = {
   feeMarkupPercent: number;
   autoUnwrapEnabled: boolean;
   autoUnwrapThresholdUscrt: string;
-  allowedContractAddresses: string[];
   grantSpendLimitUscrt: string;
   grantExpirySeconds: number;
   /** Ceiling for the first, single-transaction grant an address gets before it has paid anything.
    * This is the most a never-paying address can cost the provider in sponsored gas. */
   bootstrapGrantUscrt: string;
-  /** One-off, non-refundable, collected in the first sponsored transaction and topped back up in
-   * later ones. Only ever drawn on when a transaction fails. */
-  securityDepositUscrt: string;
+  /** How long that first grant lives. Short: it covers one purchase, and expiring is cheaper
+   * than revoking. */
+  bootstrapGrantExpirySeconds: number;
+  /** The gas-vault contract credits are bought from. Empty means credits cannot be sold. */
+  gasVaultAddress: string;
+  /** How much credit one purchase buys, and the ceiling on a requested amount. */
+  creditPurchaseUscrt: string;
 };
 
 const readStmt = db.prepare(`SELECT value FROM settings WHERE key = ?`);
@@ -41,25 +44,27 @@ export function getSettings(): Settings {
     feeMarkupPercent: raw("fee_markup_percent"),
     autoUnwrapEnabled: raw("auto_unwrap_enabled"),
     autoUnwrapThresholdUscrt: raw("auto_unwrap_threshold_uscrt"),
-    allowedContractAddresses: raw("allowed_contract_addresses"),
     grantSpendLimitUscrt: raw("grant_spend_limit_uscrt"),
     grantExpirySeconds: raw("grant_expiry_seconds"),
     bootstrapGrantUscrt: raw("bootstrap_grant_uscrt"),
-    securityDepositUscrt: raw("security_deposit_uscrt"),
+    bootstrapGrantExpirySeconds: raw("bootstrap_grant_expiry_seconds"),
+    gasVaultAddress: raw("gas_vault_address"),
+    creditPurchaseUscrt: raw("credit_purchase_uscrt"),
   };
 
   return {
     feeMarkupPercent: stored.feeMarkupPercent !== null ? Number(stored.feeMarkupPercent) : config.feeMarkupPercent,
     autoUnwrapEnabled: stored.autoUnwrapEnabled !== null ? stored.autoUnwrapEnabled === "true" : config.autoUnwrapEnabled,
     autoUnwrapThresholdUscrt: stored.autoUnwrapThresholdUscrt ?? config.autoUnwrapThresholdUscrt,
-    allowedContractAddresses:
-      stored.allowedContractAddresses !== null
-        ? stored.allowedContractAddresses.split(",").map((s) => s.trim()).filter(Boolean)
-        : config.allowedContractAddresses,
     grantSpendLimitUscrt: stored.grantSpendLimitUscrt ?? config.grantSpendLimitUscrt,
     grantExpirySeconds: stored.grantExpirySeconds !== null ? Number(stored.grantExpirySeconds) : config.grantExpirySeconds,
     bootstrapGrantUscrt: stored.bootstrapGrantUscrt ?? config.bootstrapGrantUscrt,
-    securityDepositUscrt: stored.securityDepositUscrt ?? config.securityDepositUscrt,
+    bootstrapGrantExpirySeconds:
+      stored.bootstrapGrantExpirySeconds !== null
+        ? Number(stored.bootstrapGrantExpirySeconds)
+        : config.bootstrapGrantExpirySeconds,
+    gasVaultAddress: stored.gasVaultAddress ?? config.gasVaultAddress,
+    creditPurchaseUscrt: stored.creditPurchaseUscrt ?? config.creditPurchaseUscrt,
   };
 }
 
@@ -85,11 +90,22 @@ export function updateSettings(patch: Partial<Settings>): Settings {
     if (!/^\d+$/.test(v)) throw new SettingsError("autoUnwrapThresholdUscrt must be a whole number of uscrt");
     writes.push(["auto_unwrap_threshold_uscrt", v]);
   }
-  if (patch.allowedContractAddresses !== undefined) {
-    const list = patch.allowedContractAddresses.map((s) => s.trim()).filter(Boolean);
-    const bad = list.find((a) => !/^secret1[a-z0-9]{38,}$/.test(a));
-    if (bad) throw new SettingsError(`not a valid Secret contract address: ${bad}`);
-    writes.push(["allowed_contract_addresses", list.join(",")]);
+  if (patch.gasVaultAddress !== undefined) {
+    // An empty value is allowed and means "stop selling credits" — a deliberate off switch, not
+    // an oversight. A non-empty one has to look like a contract address: SCRT paid into the wrong
+    // address cannot be recovered, because the vault has no withdrawal and nor does a typo.
+    const v = patch.gasVaultAddress.trim();
+    if (v !== "" && !/^secret1[a-z0-9]{38,}$/.test(v)) {
+      throw new SettingsError(`not a valid Secret contract address: ${v}`);
+    }
+    writes.push(["gas_vault_address", v]);
+  }
+  if (patch.creditPurchaseUscrt !== undefined) {
+    const v = String(patch.creditPurchaseUscrt);
+    if (!/^\d+$/.test(v) || v === "0") {
+      throw new SettingsError("creditPurchaseUscrt must be a positive whole number of uscrt");
+    }
+    writes.push(["credit_purchase_uscrt", v]);
   }
   if (patch.grantSpendLimitUscrt !== undefined) {
     const v = String(patch.grantSpendLimitUscrt);
@@ -107,12 +123,12 @@ export function updateSettings(patch: Partial<Settings>): Settings {
     if (BigInt(v) > full) throw new SettingsError("bootstrapGrantUscrt cannot exceed the full grant spend limit");
     writes.push(["bootstrap_grant_uscrt", v]);
   }
-  if (patch.securityDepositUscrt !== undefined) {
-    const v = String(patch.securityDepositUscrt);
-    if (!/^\d+$/.test(v) || v === "0") {
-      throw new SettingsError("securityDepositUscrt must be a positive whole number of uscrt");
+  if (patch.bootstrapGrantExpirySeconds !== undefined) {
+    const v = Number(patch.bootstrapGrantExpirySeconds);
+    if (!Number.isInteger(v) || v <= 0) {
+      throw new SettingsError("bootstrapGrantExpirySeconds must be a positive whole number of seconds");
     }
-    writes.push(["security_deposit_uscrt", v]);
+    writes.push(["bootstrap_grant_expiry_seconds", String(v)]);
   }
   if (patch.grantExpirySeconds !== undefined) {
     const v = Number(patch.grantExpirySeconds);

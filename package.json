@@ -13,18 +13,12 @@
     "smoke:simulate": "tsx src/scripts/smoke-simulate.ts",
     "wrap:scrt": "tsx src/scripts/wrap-scrt.ts",
     "calibrate:payment": "tsx src/scripts/calibrate-payment-gas.ts",
-    "smoke:quote": "tsx src/scripts/smoke-quote.ts",
-    "smoke:submit": "tsx src/scripts/smoke-submit.ts",
+    "smoke:cold-start": "tsx src/scripts/smoke-cold-start.ts",
+    "smoke:gas-credits": "tsx src/scripts/smoke-gas-credits.ts",
     "smoke:sequence-lock": "tsx src/scripts/smoke-sequence-lock.ts",
-    "smoke:delegate": "tsx src/scripts/smoke-delegate.ts",
-    "smoke:vote": "tsx src/scripts/smoke-vote.ts",
-    "smoke:resim-guard": "tsx src/scripts/smoke-resim-guard.ts",
     "smoke:http": "tsx src/scripts/smoke-http.ts",
     "smoke:tx-verify": "tsx src/scripts/smoke-tx-verify.ts",
-    "smoke:deposits": "tsx src/scripts/smoke-deposits.ts",
-    "smoke:status": "tsx src/scripts/smoke-status.ts",
-    "calibrate:contract": "tsx src/scripts/calibrate-contract-gas.ts",
-    "smoke:contract-whitelist": "tsx src/scripts/smoke-contract-whitelist.ts"
+    "smoke:status": "tsx src/scripts/smoke-status.ts"
   },
   "dependencies": {
     "secretjs": "^1.22.1",

@@ -3,11 +3,13 @@
 // quote was issued. This is the mechanism the whole design leans on to rule out a race
 // draining funds between quote-time and submit-time (see plan Context).
 import { MsgSend, MsgExecuteContract, SecretNetworkClient, Wallet } from "secretjs";
-import { requestQuote } from "../quote.js";
+import { requestPurchaseQuote } from "../quote.js";
 import { submitQuote, SubmitError } from "../submit.js";
 import { onboardUser } from "../onboarding.js";
 import { config } from "../config.js";
 import { getSscrtCodeHash, getProviderAddress, getProviderClient } from "../chain.js";
+import { getSettings } from "../settings.js";
+import { quotedMessages } from "./quotedSigning.js";
 
 const RECIPIENT = "secret1ap26qrlp8mcq2pg6r47w43l0y8zkqm8a450s03";
 
@@ -39,7 +41,7 @@ async function main() {
         sender: getProviderAddress(),
         contract_address: config.sscrtContract,
         code_hash: codeHash,
-        msg: { transfer: { recipient: address, amount: "1000000" } },
+        msg: { transfer: { recipient: address, amount: (BigInt(getSettings().creditPurchaseUscrt) * 2n).toString() } },
       }),
     ],
     { gasLimit: 200_000, gasPriceInFeeDenom: 0.25 },
@@ -51,10 +53,9 @@ async function main() {
     { gasLimit: 100_000, gasPriceInFeeDenom: 0.25 },
   );
 
-  const nativeMsg = new MsgSend({ from_address: address, to_address: RECIPIENT, amount: [{ denom: "uscrt", amount: "1" }] });
   const pubkeyBase64 = Buffer.from((await wallet.getAccounts())[0].pubkey).toString("base64");
 
-  const quote = await requestQuote({ address, messages: [nativeMsg], pubkeyBase64 });
+  const quote = await requestPurchaseQuote({ address, pubkeyBase64 });
   console.log("quote issued at sequence", quote.sequence);
 
   // Advance the account's own sequence with an ordinary, unrelated transaction — exactly the
@@ -69,17 +70,14 @@ async function main() {
   console.log("sequence advanced by an unrelated transaction, code:", advanceTx.code);
 
   // Sign against the NOW-STALE quote parameters (as if the client had been sitting on it) and
-  // submit — this must be rejected before any broadcast happens.
-  const paymentMsg = new MsgExecuteContract({
-    sender: address,
-    contract_address: config.sscrtContract,
-    code_hash: codeHash,
-    msg: { transfer: { recipient: getProviderAddress(), amount: quote.sscrtPaymentAmount } },
-  });
-  const staleSignedBytes = await userClient.tx.signTx([nativeMsg, paymentMsg], {
+  // submit — this must be rejected before any broadcast happens. The quoted bytes are signed as
+  // they are: rebuilding the message would fail byte-equality first and the test would pass for
+  // the wrong reason.
+  const staleSignedBytes = await userClient.tx.signTx(quotedMessages(quote), {
     gasLimit: quote.gasLimit,
+    gasPriceInFeeDenom: Number(quote.feeAmountUscrt) / quote.gasLimit,
     feeDenom: "uscrt",
-    feeGranter: getProviderAddress(),
+    feeGranter: quote.feeGranter,
     explicitSignerData: { accountNumber: quote.accountNumber, sequence: quote.sequence, chainId: config.chainId },
   });
 

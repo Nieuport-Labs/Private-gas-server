@@ -18,13 +18,16 @@ import {
 import { getSettings, updateSettings, SettingsError } from "./settings.js";
 import { login, logout, logoutAll, issueSession, isValidSession, tokenFromHeader, sweepSessions } from "./auth.js";
 import { isSetUp, setup, changePassword, PasswordTooShortError } from "./secretStore.js";
-import { wrapScrt, calibratePaymentGas, calibrateContractGas } from "./maintenance.js";
+import { wrapScrt, calibratePaymentGas } from "./maintenance.js";
 import { startJob, getJob, isJobRunning, JobInProgressError } from "./jobs.js";
 import { getGasConstant } from "./gasCalibration.js";
 import { onboardUser, OnboardError } from "./onboarding.js";
-import { requestQuote, requestDepositQuote, QuoteError } from "./quote.js";
-import { submitQuote, SubmitError } from "./submit.js";
-import { decodeMessages, MessageDecodeError, type WireMessage } from "./messageRegistry.js";
+import { requestPurchaseQuote, QuoteError } from "./quote.js";
+import { submitQuote, purchaseStatus, SubmitError } from "./submit.js";
+import { outstandingPurchases, deliverPending, requeuePurchase, closePurchase } from "./creditDelivery.js";
+import { queryVaultStatus, GasVaultError } from "./gasVault.js";
+import { defaultPurchase, CreditSaleError } from "./creditSale.js";
+import { purgeLegacyData, describeLegacyData } from "./dataPurge.js";
 import { RateLimiter } from "./rateLimit.js";
 import { getLastAutoUnwrap } from "./autoUnwrap.js";
 import { db } from "./db.js";
@@ -51,6 +54,15 @@ function getDepositBundle(): string | null {
   return depositBundle;
 }
 
+/** Pricing for /status, which must render even when the operator has priced credits badly. */
+function safeDefaultPurchase() {
+  try {
+    return defaultPurchase();
+  } catch {
+    return null;
+  }
+}
+
 function getQuoteAddress(quoteId: string): string | null {
   const row = db.prepare(`SELECT address FROM quotes WHERE quote_id = ?`).get(quoteId) as
     | { address: string }
@@ -59,16 +71,14 @@ function getQuoteAddress(quoteId: string): string | null {
 }
 
 const QUOTE_ERROR_STATUS: Record<QuoteError["code"], number> = {
-  no_grant: 404,
-  message_type_not_allowed: 400,
   no_permit: 404,
   insufficient_balance: 402,
   no_pubkey: 400,
-  simulate_failed: 422,
-  contract_not_allowed: 403,
-  contract_gas_not_calibrated: 422,
-  deposit_required: 402,
-  deposit_already_funded: 409,
+  credits_unavailable: 503,
+  bad_amount: 400,
+  // Not the caller's fault and not fixable by retrying: the operator has priced credits below
+  // what they cost to sell.
+  margin_too_low: 503,
 };
 
 const SUBMIT_ERROR_STATUS: Record<SubmitError["code"], number> = {
@@ -77,7 +87,6 @@ const SUBMIT_ERROR_STATUS: Record<SubmitError["code"], number> = {
   already_submitted: 409,
   sequence_changed: 409,
   insufficient_balance: 402,
-  native_action_would_fail: 422,
   signed_tx_mismatch: 400,
   // Transient and entirely the endpoint's doing: nothing was spent, and the same request will
   // usually work on a retry.
@@ -191,6 +200,11 @@ export function buildServer() {
       // balances. It is a public URL either way, so this discloses nothing.
       lcdUrl: config.lcdUrl,
       nativeGasPriceUscrt: config.nativeGasPriceUscrt,
+      // What a client needs to know before deciding whether it needs this server at all: where
+      // the credits come from, and what they cost. A client with credits already can read the
+      // vault directly and never call anything here.
+      gasVaultAddress: settings.gasVaultAddress,
+      creditsForSale: settings.gasVaultAddress ? safeDefaultPurchase() : null,
       config: {
         feeMarkupPercent: settings.feeMarkupPercent,
         autoUnwrap: {
@@ -212,17 +226,10 @@ export function buildServer() {
       // Not calibrated yet — the dashboard shows this as an action the operator still has to take.
     }
 
-    // A whitelisted contract with no constant is quoted as contract_gas_not_calibrated, which the
-    // operator otherwise only discovers when a user's transaction is refused. Listing the two
-    // together makes the missing half visible at the point where the whitelist is edited.
-    const contractGasConstants: Record<string, number | null> = {};
-    for (const address of settings.allowedContractAddresses) {
-      try {
-        contractGasConstants[address] = getGasConstant(address);
-      } catch {
-        contractGasConstants[address] = null;
-      }
-    }
+    // The vault's balance is also the sum of every allowance it still owes, so one figure answers
+    // whether the credits this provider has sold are backed. Tolerant of a missing or unreachable
+    // vault: the dashboard should still load and say what is wrong.
+    const vault = settings.gasVaultAddress ? await queryVaultStatus().catch(() => null) : null;
     return reply.send({
       ...publicPart,
       authenticated: true,
@@ -232,12 +239,22 @@ export function buildServer() {
       balances: walletConfigured ? await getProviderBalancesCached(isJobRunning() ? Infinity : undefined) : null,
       settings,
       paymentGasConstant,
-      contractGasConstants,
-      // Aggregate only: how much failure cover the provider is holding across all addresses, and
-      // for how many. Per-address figures are the user's business, not the dashboard's.
-      deposits: db
-        .prepare(`SELECT COUNT(*) AS addresses, COALESCE(SUM(CAST(remaining_uscrt AS INTEGER)), 0) AS remaining FROM deposits`)
-        .get() as { addresses: number; remaining: number },
+      vault,
+      // Everything paid for and not yet delivered. These are the only rows on this server that
+      // still carry a buyer's address, and each one disappears the moment its credits land — so a
+      // long list here is a problem to fix, not a normal state.
+      outstanding: outstandingPurchases(),
+      // What the provider has earned and spent, with no record of who from.
+      sales: db
+        .prepare(
+          `SELECT COUNT(*) AS sales,
+                  COALESCE(SUM(CAST(sscrt_received AS INTEGER)), 0) AS sscrtReceived,
+                  COALESCE(SUM(CAST(credits_sold_uscrt AS INTEGER)), 0) AS creditsSold,
+                  COALESCE(SUM(CAST(native_fee_spent_uscrt AS INTEGER)), 0) AS nativeSpent
+             FROM sales_ledger`,
+        )
+        .get() as Record<string, number>,
+      legacyData: describeLegacyData(),
       job: getJob(),
       lastAutoUnwrap: lastAutoUnwrap && {
         txHash: lastAutoUnwrap.tx_hash,
@@ -345,52 +362,6 @@ export function buildServer() {
     }
   });
 
-  // The whitelist and the gas constant it needs are two halves of one setup step, and until now
-  // only the first half had a control — the second lived in a CLI script, which meant an operator
-  // could whitelist a contract from the dashboard and then be told by /quote to go and find a
-  // terminal.
-  app.post<{ Body: { contractAddress?: string; execMsg?: unknown; samples?: number } }>(
-    "/admin/calibrate-contract",
-    async (req, reply) => {
-      const contractAddress = String(req.body?.contractAddress ?? "").trim();
-      const { execMsg } = req.body ?? {};
-      const samples = Number(req.body?.samples ?? 5);
-
-      if (!contractAddress) {
-        return reply.status(400).send({ error: "bad_request", message: "contractAddress is required" });
-      }
-      // Calibrating something the provider will not quote anyway spends real gas for nothing, so
-      // the whitelist is checked here rather than left to fail later.
-      if (!getSettings().allowedContractAddresses.includes(contractAddress)) {
-        return reply.status(400).send({
-          error: "contract_not_allowed",
-          message: `${contractAddress} is not on the whitelist — add it in Settings first`,
-        });
-      }
-      if (!execMsg || typeof execMsg !== "object" || Array.isArray(execMsg)) {
-        return reply
-          .status(400)
-          .send({ error: "bad_request", message: "execMsg must be a JSON object, e.g. {\"transfer\":{…}}" });
-      }
-      if (!Number.isInteger(samples) || samples < 1 || samples > 50) {
-        return reply
-          .status(400)
-          .send({ error: "bad_request", message: "samples must be a whole number between 1 and 50" });
-      }
-
-      try {
-        return reply.send({
-          job: startJob("calibrate-contract", (onProgress) =>
-            calibrateContractGas(contractAddress, execMsg as object, samples, onProgress),
-          ),
-        });
-      } catch (err) {
-        if (err instanceof JobInProgressError) return reply.status(409).send({ error: err.code, message: err.message });
-        throw err;
-      }
-    },
-  );
-
   app.post<{ Body: Record<string, unknown> }>("/admin/settings", async (req, reply) => {
     try {
       return reply.send({ settings: updateSettings(req.body as never) });
@@ -425,47 +396,28 @@ export function buildServer() {
     }
   });
 
-  // The security deposit, quoted as a transaction of its own. It has to be one: bundled with a
-  // user's action it would revert together with it, and an address could then fail transactions
-  // indefinitely without ever funding the cover those failures are charged to.
-  app.post<{ Body: { address: string; pubkeyBase64?: string } }>("/deposit", async (req, reply) => {
-    const { address, pubkeyBase64 } = req.body ?? ({} as any);
-    if (!address) return reply.status(400).send({ error: "bad_request", message: "address is required" });
-    const rateLimited = checkRateLimit(req.ip, address);
-    if (rateLimited) return reply.status(429).send({ error: "rate_limited", message: rateLimited });
-
-    try {
-      return reply.send(await requestDepositQuote({ address, pubkeyBase64 }));
-    } catch (err) {
-      if (err instanceof QuoteError) {
-        return reply.status(QUOTE_ERROR_STATUS[err.code] ?? 400).send({ error: err.code, message: err.message });
-      }
-      if (err instanceof WalletNotConfiguredError) {
-        return reply.status(503).send({ error: err.code, message: err.message });
-      }
-      req.log.error(err);
-      return reply.status(500).send({ error: "deposit_quote_failed", message: (err as Error).message });
-    }
-  });
-
-  app.post<{ Body: { address: string; pubkeyBase64?: string; messages: WireMessage[] } }>(
-    "/quote",
+  // The one transaction this provider sponsors: a payment for gas credits, built here in full.
+  //
+  // The client supplies no messages. That is the whole difference from the design this replaces,
+  // and it is why the contract whitelist, the per-contract gas constants, the outflow prediction
+  // and the security deposit are all gone -- every one of them existed to manage the risk of
+  // sponsoring a message somebody else wrote.
+  app.post<{ Body: { address: string; pubkeyBase64?: string; creditAmountUscrt?: string } }>(
+    "/purchase/quote",
     async (req, reply) => {
-      const { address, pubkeyBase64, messages } = req.body ?? ({} as any);
+      const { address, pubkeyBase64, creditAmountUscrt } = req.body ?? ({} as any);
       if (!address) return reply.status(400).send({ error: "bad_request", message: "address is required" });
       const rateLimited = checkRateLimit(req.ip, address);
       if (rateLimited) return reply.status(429).send({ error: "rate_limited", message: rateLimited });
 
       try {
-        const decoded = decodeMessages(messages);
-        const result = await requestQuote({ address, messages: decoded, pubkeyBase64 });
-        return reply.send(result);
+        return reply.send(await requestPurchaseQuote({ address, pubkeyBase64, creditAmountUscrt }));
       } catch (err) {
-        if (err instanceof MessageDecodeError) {
-          return reply.status(400).send({ error: "bad_messages", message: err.message });
-        }
         if (err instanceof QuoteError) {
           return reply.status(QUOTE_ERROR_STATUS[err.code] ?? 400).send({ error: err.code, message: err.message });
+        }
+        if (err instanceof GasVaultError || err instanceof CreditSaleError) {
+          return reply.status(503).send({ error: "credits_unavailable", message: err.message });
         }
         if (err instanceof WalletNotConfiguredError) {
           return reply.status(503).send({ error: err.code, message: err.message });
@@ -475,6 +427,16 @@ export function buildServer() {
       }
     },
   );
+
+  // Where a purchase has got to. The credits arrive in a second transaction the provider signs
+  // after the payment lands, so there is a real gap for a client to poll across -- see
+  // creditDelivery.ts for why it cannot be closed with one signature.
+  app.get<{ Params: { quoteId: string } }>("/purchase/:quoteId", async (req, reply) => {
+    if (!ipLimiter.allow(req.ip)) {
+      return reply.status(429).send({ error: "rate_limited", message: "rate limit exceeded for this IP" });
+    }
+    return reply.send(purchaseStatus(req.params.quoteId));
+  });
 
   app.post<{ Body: { quoteId: string; signedTxBytes: string } }>("/submit", async (req, reply) => {
     const { quoteId, signedTxBytes } = req.body ?? ({} as any);
@@ -504,6 +466,38 @@ export function buildServer() {
       return reply.status(500).send({ error: "submit_failed", message: (err as Error).message });
     }
   });
+
+  // Delivery queue. A purchase that is paid for and undelivered is money the provider owes, so it
+  // is the one thing on this dashboard that needs a button rather than a number.
+  app.post("/admin/deliver", async (_req, reply) => reply.send(await deliverPending()));
+
+  app.post<{ Body: { quoteId?: string } }>("/admin/purchase/requeue", async (req, reply) => {
+    const quoteId = String(req.body?.quoteId ?? "").trim();
+    if (!quoteId) return reply.status(400).send({ error: "bad_request", message: "quoteId is required" });
+    if (!requeuePurchase(quoteId)) {
+      return reply.status(409).send({
+        error: "not_requeueable",
+        message: "only a failed or reviewed purchase can be put back in the queue",
+      });
+    }
+    return reply.send(await deliverPending());
+  });
+
+  // For a purchase confirmed delivered by hand, or written off. Deliberately separate from a
+  // retry: this one says "do not try again", and getting those two the wrong way round either
+  // grants twice or never.
+  app.post<{ Body: { quoteId?: string } }>("/admin/purchase/close", async (req, reply) => {
+    const quoteId = String(req.body?.quoteId ?? "").trim();
+    if (!quoteId) return reply.status(400).send({ error: "bad_request", message: "quoteId is required" });
+    if (!closePurchase(quoteId)) {
+      return reply.status(404).send({ error: "not_found", message: `no outstanding purchase ${quoteId}` });
+    }
+    return reply.send({ closed: quoteId });
+  });
+
+  // Delete what this server no longer has a reason to hold. Read the counts first
+  // (/status.legacyData), then this; it cannot be undone and it is not meant to be.
+  app.post("/admin/purge", async (_req, reply) => reply.send(purgeLegacyData()));
 
   return app;
 }

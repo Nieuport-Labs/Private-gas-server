@@ -79,17 +79,26 @@ export const config = {
   // Grant scoping (plan: "Bezpečnost" — never an unrestricted grant).
   grantSpendLimitUscrt: process.env.GRANT_SPEND_LIMIT_USCRT ?? "1000000",
 
-  // A one-off, non-refundable security deposit collected inside an address's first sponsored
-  // transaction and topped back up inside later ones. It is never spent on ordinary usage — users
-  // keep paying per transaction — it exists only to absorb a transaction that fails, where the
-  // fee is taken in the ante handler and the payment reverts with everything else.
-  securityDepositUscrt: process.env.SECURITY_DEPOSIT_USCRT ?? "1000000", // 1 sSCRT
+  // The gas-vault contract that issues gas credits. Empty means credits cannot be sold: there is
+  // no fallback and no default, because paying SCRT into the wrong address is unrecoverable —
+  // the contract has no withdrawal. Confirmed live on secret-4 at
+  // secret1kkmu4vydkppkhzmx00glm20vn47t09544adv0g; set it explicitly anyway.
+  gasVaultAddress: process.env.GAS_VAULT_ADDRESS ?? "",
+
+  // How much gas credit one purchase buys, and the ceiling on a client-requested amount. The
+  // provider has to hold native SCRT to cover whatever it sells, so this is also what caps how
+  // fast a single caller can draw that reserve down.
+  creditPurchaseUscrt: process.env.CREDIT_PURCHASE_USCRT ?? "10000000", // 10 SCRT
 
   // The first grant an address gets, before it has paid anything: enough for exactly one
-  // sponsored transaction with headroom (a typical bundle costs ~26000 uscrt). This is the
-  // ceiling on what a never-paying address can take, so it is deliberately small — the full
-  // spend limit only arrives once the onboarding fee has landed.
+  // sponsored transaction with headroom (the sSCRT payment costs ~26000 uscrt). This is the
+  // ceiling on what a never-paying address can take, so it is deliberately small.
   bootstrapGrantUscrt: process.env.BOOTSTRAP_GRANT_USCRT ?? "60000",
+
+  // A bootstrap grant covers one purchase, which happens within a minute or is abandoned. It is
+  // left to expire rather than revoked, because revoking costs another transaction to reclaim an
+  // amount smaller than the transaction. A short expiry is what makes that cheap.
+  bootstrapGrantExpirySeconds: Number(process.env.BOOTSTRAP_GRANT_EXPIRY_SECONDS ?? 900), // 15 min
   grantExpirySeconds: Number(process.env.GRANT_EXPIRY_SECONDS ?? 60 * 60 * 24 * 30), // 30 days
   allowedMessageTypes: (
     process.env.ALLOWED_MESSAGE_TYPES ??
@@ -132,19 +141,6 @@ export const config = {
   autoUnwrapEnabled: (process.env.AUTO_UNWRAP_ENABLED ?? "true") === "true",
   autoUnwrapThresholdUscrt: process.env.AUTO_UNWRAP_THRESHOLD_USCRT ?? "100000000", // 100 SCRT
   autoUnwrapCheckIntervalSeconds: Number(process.env.AUTO_UNWRAP_CHECK_INTERVAL_SECONDS ?? 60),
-
-  // Contracts the provider is willing to sponsor a MsgExecuteContract *user action* against
-  // (e.g. a DEX swap) — separate from allowedMessageTypes, which only scopes the on-chain grant
-  // by message type and can't filter by contract address at all (a Cosmos SDK feegrant
-  // limitation, not something this server can work around on-chain). Whole-contract, not
-  // per-entry-point: simpler to operate, at the cost of one gas constant needing to cover the
-  // most expensive call the operator intends to allow on that contract (see quote.ts and
-  // gasCalibration.ts). Empty by default — nothing beyond the built-in sSCRT payment is
-  // sponsorable until the operator explicitly whitelists something and calibrates its gas.
-  allowedContractAddresses: (process.env.ALLOWED_CONTRACT_ADDRESSES ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean),
 
   dbPath: process.env.DB_PATH ?? "./provider.sqlite3",
   port: Number(process.env.PORT ?? 8787),
