@@ -43,6 +43,19 @@ gh api orgs/Nieuport-Labs/packages/container/private-gas-server/versions --jq '.
 Put that digest in `docker-compose.phala.yml`, commit it, and treat changing it as a release:
 the app id changes with it, and every client pinning the old one will — correctly — refuse.
 
+## Two settings that are easy to get wrong
+
+**Logs.** Phala can serve a CVM's logs publicly, and the choice is made in the app's settings.
+This server no longer writes addresses into them — failures are logged with the address redacted
+to its last four characters — but the setting is still worth choosing deliberately rather than
+inheriting. A log stream is the other pipe the record of who used a service escapes through.
+
+**Upgrades drop secrets that are not re-supplied.** Every environment variable has to be given
+again on an upgrade, unchanged ones included; a partial update silently removes the rest. If
+`ADMIN_PASSWORD` goes missing that way the store will not unlock, the wallet cannot sign, and
+the provider answers 503 until somebody unlocks it from the dashboard. Recoverable, but only if
+you know that is what happened.
+
 ## Deploying
 
 The Phala Cloud account and the bill are yours. Nothing below should be run by anybody else.

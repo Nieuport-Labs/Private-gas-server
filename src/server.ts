@@ -40,6 +40,27 @@ import type { Permit } from "secretjs";
 const publicDir = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
 const dashboardHtml = readFileSync(join(publicDir, "index.html"), "utf-8");
 
+/**
+ * Addresses do not go in the log.
+ *
+ * Several errors name the address they are about -- "no stored balance permit for secret1..." --
+ * and Fastify writes whatever it is handed. On a host that offers public logs, that turns the
+ * log stream into the record of who used this provider that was just deleted from the database.
+ * The same leak, through a different pipe.
+ *
+ * The last four characters survive so two entries can still be told apart while debugging, which
+ * is the only thing the full address was ever doing here.
+ */
+function redactAddresses(text: string): string {
+  return text.replace(/secret1[0-9a-z]{38,}/g, (a) => `secret1…${a.slice(-4)}`);
+}
+
+/** Log a failure without writing anybody's address into it. */
+function logFailure(req: { log: { error: (o: unknown) => void } }, err: unknown): void {
+  const e = err as Error;
+  req.log.error({ err: redactAddresses(e?.message ?? String(err)), stack: e?.stack });
+}
+
 /** Pricing for /status, which has to render even when the operator has priced credits badly. */
 function safeDefaultPurchase() {
   try {
@@ -405,7 +426,7 @@ export function buildServer() {
       if (err instanceof WalletNotConfiguredError) {
         return reply.status(503).send({ error: err.code, message: err.message });
       }
-      req.log.error(err);
+      logFailure(req, err);
       return reply.status(500).send({ error: "onboard_failed", message: err.message });
     }
   });
@@ -436,7 +457,7 @@ export function buildServer() {
         if (err instanceof WalletNotConfiguredError) {
           return reply.status(503).send({ error: err.code, message: err.message });
         }
-        req.log.error(err);
+        logFailure(req, err);
         return reply.status(500).send({ error: "quote_failed", message: (err as Error).message });
       }
     },
@@ -476,7 +497,7 @@ export function buildServer() {
       if (err instanceof WalletNotConfiguredError) {
         return reply.status(503).send({ error: err.code, message: err.message });
       }
-      req.log.error(err);
+      logFailure(req, err);
       return reply.status(500).send({ error: "submit_failed", message: (err as Error).message });
     }
   });
