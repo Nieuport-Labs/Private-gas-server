@@ -9,10 +9,7 @@ COPY package.json package-lock.json* ./
 RUN npm install
 COPY tsconfig.json ./
 COPY src ./src
-# browser/ and public/ are inputs to the build too: `npm run build` also bundles the dashboard's
-# Keplr helper into public/vendor/ (self-hosted rather than loaded from a CDN — see
-# browser/deposit-entry.ts).
-COPY browser ./browser
+# The dashboard is one static file, served from memory; no bundling, no assets.
 COPY public ./public
 RUN npm run build
 

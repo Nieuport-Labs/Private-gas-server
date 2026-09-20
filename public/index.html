@@ -239,10 +239,6 @@
   }
 
   /* ---------- modals ---------- */
-  /* Stacking order, and it matters: the wizard sits BELOW the ordinary modals, because every
-     modal that can be open at the same time as the wizard was opened from inside it (the seed
-     reveal, the deposit dialog). Putting the wizard on top hides them behind it — which, for the
-     one and only showing of a seed phrase, loses it. */
   .overlay {
     position: fixed; inset: 0; z-index: 200;
     display: none;
@@ -297,19 +293,9 @@
   label.check { display: flex; gap: 0.55rem; align-items: flex-start; font-size: 0.84rem; color: var(--muted); cursor: pointer; }
   label.check input { margin-top: 0.25rem; }
 
-  /* Above every other modal: it can be opened from the wallet dialog too. */
+  /* Above every other modal: it is opened from the wallet dialog, and it is the one and only
+     showing of a seed phrase. Behind something else, it is lost. */
   #m-seed { z-index: 300; }
-
-  /* ---------- wizard ---------- */
-  #wizard { z-index: 150; background: rgba(6, 6, 6, 0.9); }
-  #wizard .modal { max-width: 620px; }
-  .wrail { display: flex; gap: 0.35rem; padding: 0 1.15rem 0.95rem; }
-  .wrail .seg { flex: 1; height: 3px; border-radius: 999px; background: rgba(255, 255, 255, 0.12); }
-  .wrail .seg.done { background: var(--accent); }
-  .wrail .seg.now { background: var(--accent); opacity: 0.55; }
-  .wstep { display: none; }
-  .wstep.show { display: block; }
-  .steplead { color: var(--muted); font-size: 0.88rem; margin: 0 0 1.1rem; }
 
   @media (max-width: 860px) {
     .stats { grid-template-columns: repeat(2, 1fr); }
@@ -326,84 +312,68 @@
 <body>
 
 <div class="app">
-  <header class="topbar">
-    <div class="brand">
-      <div class="mark">
-        <svg viewBox="0 0 24 24" fill="none" stroke="#ff3912" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 2 3 7v10l9 5 9-5V7z" />
-          <path d="M12 22V12M3 7l9 5 9-5" />
-        </svg>
+  <!-- ============ SIGN IN ============ -->
+  <div class="overlay" id="m-login">
+    <div class="modal">
+      <header><h3 id="login-title">Sign in</h3></header>
+      <div class="modal-body">
+        <p class="muted" style="margin-top: 0;" id="login-lead">
+          Balances, the wallet and settings need the admin password.
+        </p>
+        <div class="field">
+          <label for="login-password" id="login-label">Admin password</label>
+          <input type="password" id="login-password" autocomplete="current-password" />
+          <div class="hint" id="login-hint"></div>
+        </div>
+        <div class="err" id="login-err"></div>
       </div>
-      <div>
-        <div class="name">Gas provider</div>
-        <div class="sub">sSCRT fee sponsorship</div>
+      <div class="modal-foot">
+        <button class="btn primary" id="login-run">Sign in</button>
       </div>
     </div>
-
-    <div class="spacer"></div>
-
-    <span class="pill"><span class="dot"></span><span id="chain-id">&mdash;</span></span>
-    <button class="pill addr-pill hidden" id="addr-pill" title="Copy provider address">
-      <code id="addr-text"></code>
-    </button>
-
-    <button class="icon-btn hidden" id="btn-settings" title="Settings">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="12" cy="12" r="3" />
-        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-      </svg>
-    </button>
-    <button class="icon-btn hidden" id="btn-logout" title="Sign out">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-        <path d="m16 17 5-5-5-5M21 12H9" />
-      </svg>
-    </button>
-  </header>
-
-  <!-- ============ LOGIN ============ -->
-  <main id="screen-login" class="hidden" style="max-width: 400px; padding-top: 5rem;">
-    <div class="panel" style="padding: 1.5rem;">
-      <h3 style="margin-bottom: 0.4rem;">Sign in</h3>
-      <p class="muted" style="margin: 0 0 1.25rem;">
-        Balances, wallet management and settings need the admin password.
-      </p>
-      <div class="field">
-        <label for="login-password">Admin password</label>
-        <input type="password" id="login-password" autocomplete="current-password" />
-      </div>
-      <button class="btn primary wide" id="login-btn">Sign in</button>
-      <div class="err" id="login-error" style="margin-top: 0.7rem;"></div>
-    </div>
-  </main>
+  </div>
 
   <!-- ============ DASHBOARD ============ -->
-  <main id="screen-app" class="hidden">
+  <header class="topbar">
+    <div class="brand">
+      <div class="mark">sS</div>
+      <div>
+        <div class="name">sSCRT gas provider</div>
+        <div class="sub">sells gas credits</div>
+      </div>
+    </div>
+    <div class="spacer"></div>
+    <span class="addr-pill mono" id="provider-addr">&mdash;</span>
+    <button class="btn" id="btn-wallet">Wallet</button>
+    <button class="btn" id="btn-settings">Settings</button>
+    <button class="btn ghost" id="btn-logout">Sign out</button>
+  </header>
+
+  <main>
     <div class="banner hidden" id="setup-banner">
-      <span class="txt" id="setup-banner-text"></span>
-      <button class="btn" id="btn-wizard">Continue setup</button>
+      <div class="txt" id="setup-banner-text"></div>
     </div>
 
     <section class="stats">
       <div class="stat">
-        <div class="label">SCRT (native)</div>
+        <div class="label">Native SCRT</div>
         <div class="value" id="stat-scrt">&mdash;</div>
-        <div class="sub">spent sponsoring gas</div>
+        <div class="sub">what credits are bought with</div>
       </div>
       <div class="stat">
         <div class="label">sSCRT</div>
         <div class="value" id="stat-sscrt">&mdash;</div>
-        <div class="sub">received from users</div>
+        <div class="sub">what buyers pay in</div>
       </div>
       <div class="stat">
-        <div class="label">Payment gas</div>
-        <div class="value" id="stat-calib">&mdash;</div>
-        <div class="sub" id="stat-calib-sub">calibrated constant</div>
+        <div class="label">Credits outstanding</div>
+        <div class="value" id="stat-vault">&mdash;</div>
+        <div class="sub">held at the vault, owed as gas</div>
       </div>
       <div class="stat">
-        <div class="label">Fee markup</div>
-        <div class="value" id="stat-fee">&mdash;</div>
-        <div class="sub">charged over cost</div>
+        <div class="label">Sold</div>
+        <div class="value" id="stat-sold">&mdash;</div>
+        <div class="sub" id="stat-sold-sub">&nbsp;</div>
       </div>
     </section>
 
@@ -411,31 +381,20 @@
     <div class="panel">
       <div class="oprow">
         <div class="txt">
-          <div class="t">Provider wallet</div>
-          <div class="d" id="wallet-desc">&mdash;</div>
-        </div>
-        <button class="btn" id="btn-wallet">Manage</button>
-      </div>
-      <div class="oprow">
-        <div class="txt">
-          <div class="t">Deposit SCRT</div>
-          <div class="d">Top the provider up from your own Keplr wallet</div>
-        </div>
-        <button class="btn" id="btn-deposit">Deposit</button>
-      </div>
-      <div class="oprow">
-        <div class="txt">
-          <div class="t">Wrap SCRT &rarr; sSCRT</div>
-          <div class="d">Needed before calibration, which pays itself in sSCRT</div>
-        </div>
-        <button class="btn job-btn" id="btn-wrap">Wrap</button>
-      </div>
-      <div class="oprow">
-        <div class="txt">
           <div class="t">Calibrate payment gas</div>
-          <div class="d">Measures the real cost of the payment message on chain</div>
+          <div class="d" id="calib-summary">Measures what the payment message really costs</div>
         </div>
         <button class="btn job-btn" id="btn-calibrate">Calibrate</button>
+      </div>
+      <div class="oprow">
+        <div class="txt">
+          <div class="t">Wrap SCRT into sSCRT</div>
+          <div class="d">
+            Only calibration needs this &mdash; it measures with real self-transfers, so the
+            provider has to hold a little sSCRT. Selling credits does not.
+          </div>
+        </div>
+        <button class="btn job-btn" id="btn-wrap">Wrap</button>
       </div>
       <div class="oprow">
         <div class="txt">
@@ -447,7 +406,7 @@
       <div class="oprow">
         <div class="txt">
           <div class="t">Delete old data</div>
-          <div class="d" id="purge-summary">Permits, quotes and transaction records this server no longer needs</div>
+          <div class="d" id="purge-summary">Permits, quotes and records this server no longer needs</div>
         </div>
         <button class="btn" id="btn-purge">Delete</button>
       </div>
@@ -463,30 +422,29 @@
       </div>
     </div>
 
+    <div id="owed-panel" class="hidden">
+      <h2>Owed</h2>
+      <div class="panel">
+        <table class="kv" id="owed-table"></table>
+      </div>
+      <p class="muted">
+        Paid for and not yet delivered. These are the only rows here still carrying a buyer's
+        address, and each disappears when its credits land &mdash; so a list that stays is a
+        problem, not a normal state.
+      </p>
+    </div>
+
     <h2>Network</h2>
     <div class="panel">
       <table class="kv">
         <tr><td>Chain</td><td id="kv-chain">&mdash;</td></tr>
         <tr><td>LCD endpoint</td><td id="kv-lcd">&mdash;</td></tr>
-        <tr><td>sSCRT contract</td><td id="kv-sscrt">&mdash;</td></tr>
+        <tr><td>sSCRT</td><td id="kv-sscrt">&mdash;</td></tr>
+        <tr><td>Gas vault</td><td id="kv-vault">&mdash;</td></tr>
+        <tr><td>Credits for sale</td><td id="kv-price">&mdash;</td></tr>
         <tr><td>Auto-unwrap</td><td id="kv-unwrap">&mdash;</td></tr>
         <tr><td>Last auto-unwrap</td><td id="kv-last-unwrap">&mdash;</td></tr>
-        <tr><td>Gas vault</td><td id="kv-vault">&mdash;</td></tr>
-        <tr><td>Credits outstanding at the vault</td><td id="kv-vault-balance">&mdash;</td></tr>
-        <tr><td>Credits sold</td><td id="kv-sales">&mdash;</td></tr>
       </table>
-    </div>
-
-    <div id="outstanding-panel" class="hidden">
-      <h2>Owed</h2>
-      <div class="panel">
-        <p class="muted" style="margin-top: 0;">
-          Paid for and not yet delivered. These are the only rows here that still carry a buyer's
-          address, and each one disappears the moment its credits land &mdash; so a list that
-          stays is a problem, not a normal state.
-        </p>
-        <table class="kv" id="outstanding-table"></table>
-      </div>
     </div>
 
     <footer class="muted" id="footer" style="margin-top: 1.5rem;">loading&hellip;</footer>
@@ -499,84 +457,42 @@
     <header><h3>Provider wallet</h3><button class="icon-btn" data-close>&#10005;</button></header>
     <div class="modal-body">
       <p class="muted" id="wallet-state" style="margin-top: 0;"></p>
-      <div class="row" style="margin-bottom: 0.9rem;">
-        <button class="btn" id="btn-generate">Generate new wallet</button>
-        <button class="btn ghost" id="btn-import-toggle">Import seed phrase</button>
-      </div>
-      <div id="import-form" class="hidden">
-        <div class="field">
-          <label for="mnemonic">Seed phrase (12 or 24 words)</label>
-          <textarea id="mnemonic" rows="3" autocomplete="off" spellcheck="false" class="mono"></textarea>
-        </div>
-        <button class="btn primary" id="btn-import">Import</button>
-      </div>
-      <div class="err" id="wallet-error" style="margin-top: 0.7rem;"></div>
-      <p class="muted" style="margin-bottom: 0;">
-        The seed is encrypted at rest and unwrapped automatically on restart. Generating a new one
-        stops the old wallet being used &mdash; move its funds out first.
+      <p class="muted">
+        It needs native SCRT: every credit sold is paid into the vault out of this balance, and
+        a cold buyer's first transaction is paid for by a small allowance from it.
       </p>
+      <div class="field">
+        <label for="wallet-mnemonic">Import a mnemonic</label>
+        <textarea id="wallet-mnemonic" rows="3" spellcheck="false" class="mono"></textarea>
+        <div class="hint">
+          Stored encrypted under your admin password, so a copy of the database file alone does
+          not yield it.
+        </div>
+      </div>
     </div>
-    <div class="modal-foot"><button class="btn ghost" data-close>Close</button></div>
+    <div class="modal-foot">
+      <span class="msg" id="wallet-msg"></span>
+      <button class="btn" id="wallet-generate">Generate</button>
+      <button class="btn primary" id="wallet-import">Import</button>
+    </div>
   </div>
 </div>
 
 <!-- ============ MODAL: seed reveal ============ -->
 <div class="overlay" id="m-seed">
   <div class="modal">
-    <header><h3 style="color: var(--accent);">Write this down now</h3></header>
+    <header><h3>Write this down</h3></header>
     <div class="modal-body">
       <p class="muted" style="margin-top: 0;">
-        Shown once, never again. Anyone holding this phrase controls the provider's funds.
-        Store it in your password manager or on paper &mdash; not in a chat, an email or a screenshot.
+        Shown once and never again. It is the only way back into this wallet, and anyone who has
+        it can spend everything in it.
       </p>
       <div class="seedbox" id="seed-words"></div>
-      <label class="check" style="margin-top: 1rem;">
-        <input type="checkbox" id="seed-ack-check" />
-        <span>I have written down the seed phrase and stored it somewhere safe.</span>
-      </label>
     </div>
     <div class="modal-foot">
-      <button class="btn primary" id="seed-ack-btn" disabled>Done</button>
+      <label class="check"><input type="checkbox" id="seed-ack" /><span>I have written it down.</span></label>
+      <button class="btn primary" id="seed-done" disabled>Done</button>
     </div>
-  </div>
-</div>
-
-<!-- ============ MODAL: deposit via Keplr ============ -->
-<div class="overlay" id="m-deposit">
-  <div class="modal">
-    <header><h3>Deposit SCRT</h3><button class="icon-btn" data-close>&#10005;</button></header>
-    <div class="modal-body">
-      <p class="muted" style="margin-top: 0;">
-        Sends native SCRT from your own wallet to the provider. Keplr shows you the destination
-        and the amount and asks you to approve &mdash; nothing is signed here.
-      </p>
-
-      <div class="field">
-        <label>Provider address (destination)</label>
-        <div class="mono" id="dep-target" style="font-size: 0.78rem; word-break: break-all; color: var(--muted);"></div>
-      </div>
-
-      <div id="dep-disconnected">
-        <button class="btn primary wide" id="dep-connect">Connect Keplr</button>
-      </div>
-
-      <div id="dep-connected" class="hidden">
-        <div class="field">
-          <label>Your wallet</label>
-          <div class="mono" id="dep-account" style="font-size: 0.78rem; word-break: break-all;"></div>
-          <div class="hint" id="dep-balance"></div>
-        </div>
-        <div class="field">
-          <label for="dep-amount">Amount (SCRT)</label>
-          <input type="text" id="dep-amount" inputmode="decimal" value="5" />
-          <div class="hint">Enough to sponsor gas for a while. You can always top up later.</div>
-        </div>
-        <button class="btn primary wide" id="dep-send">Send</button>
-      </div>
-
-      <div id="dep-msg" style="margin-top: 0.8rem; overflow-wrap: anywhere;"></div>
-    </div>
-    <div class="modal-foot"><button class="btn ghost" data-close>Close</button></div>
   </div>
 </div>
 
@@ -586,12 +502,14 @@
     <header><h3>Wrap SCRT into sSCRT</h3><button class="icon-btn" data-close>&#10005;</button></header>
     <div class="modal-body">
       <p class="muted" style="margin-top: 0;">
-        Calibration pays itself in sSCRT, so the provider needs some before it can measure
-        anything. This is a real transaction and costs gas.
+        Deposits native SCRT into the sSCRT contract, 1:1 and reversible. The only reason to do
+        it is calibration, which measures with real self-transfers and so needs a small balance
+        to move around.
       </p>
       <div class="field">
         <label for="wrap-amount">Amount (SCRT)</label>
-        <input type="text" id="wrap-amount" inputmode="decimal" value="1000000" class="mono" />
+        <input type="text" id="wrap-amount" inputmode="decimal" class="mono" value="1" />
+        <div class="hint">One is plenty; calibration moves fractions of a uscrt at a time.</div>
       </div>
       <div class="joblog hidden"></div>
     </div>
@@ -609,18 +527,18 @@
     <header><h3>Calibrate payment gas</h3><button class="icon-btn" data-close>&#10005;</button></header>
     <div class="modal-body">
       <p class="muted" style="margin-top: 0;">
-        Sends real self-transfers and reads back the gas each one used. It cannot be simulated
-        &mdash; Secret will not simulate an encrypted contract call. Expect a few samples to be
-        lost to the public endpoint; the run needs at least three to record anything.
+        Sends real self-transfers and reads back the gas each used. It cannot be simulated
+        &mdash; Secret will not simulate an encrypted contract call. Expect a sample or two to be
+        lost to the public endpoint; at least three have to succeed.
       </p>
       <div class="field">
         <label for="calib-samples">Samples</label>
         <input type="number" id="calib-samples" min="3" max="20" value="3" />
         <div class="hint">
-          Roughly 0.013 SCRT of gas per sample. Three is enough: the recorded constant is the
-          <em>highest</em> sample plus 15&nbsp;%, not an average, and this message has never varied
-          by more than four gas. More samples cannot make it more accurate &mdash; they can only
-          find a higher maximum and make every quote dearer.
+          Three is enough. The recorded constant is the <em>highest</em> sample plus 15&nbsp;%,
+          not an average, and this message has never varied by more than four gas &mdash; so more
+          samples cannot make it more accurate, only find a higher maximum and make every quote
+          dearer.
         </div>
       </div>
       <div class="joblog hidden"></div>
@@ -639,9 +557,45 @@
     <header><h3>Settings</h3><button class="icon-btn" data-close>&#10005;</button></header>
     <div class="modal-body">
       <div class="field">
+        <label for="gas-vault">Gas vault contract</label>
+        <input type="text" id="gas-vault" spellcheck="false" class="mono" />
+        <div class="hint">
+          Where credits are bought from. Empty stops sales. Check it before saving: the vault has
+          no withdrawal, so SCRT paid to the wrong address does not come back.
+        </div>
+      </div>
+      <div class="field">
+        <label for="credit-purchase">Credits sold per purchase (SCRT)</label>
+        <input type="text" id="credit-purchase" inputmode="decimal" class="mono" />
+        <div class="hint">
+          What one purchase buys, and the ceiling on what a client may ask for. Paid into the
+          vault out of the provider's own SCRT, so it also caps how fast one caller can draw that
+          reserve down.
+        </div>
+      </div>
+      <div class="field">
         <label for="fee-markup">Fee markup (%)</label>
-        <input type="number" id="fee-markup" min="0" max="1000" step="0.5" />
-        <div class="hint">Charged on top of the sponsored gas cost.</div>
+        <input type="number" id="fee-markup" class="mono" />
+        <div class="hint">
+          The whole revenue. It has to cover the buyer's transaction and the provider's delivery
+          transaction both, or a quote is refused rather than sold at a loss.
+        </div>
+      </div>
+      <div class="field">
+        <label for="bootstrap-grant">First allowance before payment (SCRT)</label>
+        <input type="text" id="bootstrap-grant" inputmode="decimal" class="mono" />
+        <div class="hint">
+          What an address with no gas gets so it can sign its one purchase. This is the most a
+          buyer who never pays can cost.
+        </div>
+      </div>
+      <div class="field">
+        <label for="bootstrap-expiry">First allowance expiry (seconds)</label>
+        <input type="text" id="bootstrap-expiry" inputmode="numeric" class="mono" />
+        <div class="hint">
+          Short. It covers one purchase, and an unused one is left to expire because revoking it
+          costs more than it reclaims.
+        </div>
       </div>
       <div class="field">
         <label for="auto-unwrap-enabled">Auto-unwrap</label>
@@ -649,52 +603,14 @@
           <option value="true">enabled</option>
           <option value="false">disabled</option>
         </select>
-        <div class="hint">Redeems accumulated sSCRT back into native SCRT so the provider can keep paying gas.</div>
+        <div class="hint">
+          Redeems accumulated sSCRT back into native SCRT. Without it the reserve credits are
+          bought from only ever shrinks.
+        </div>
       </div>
       <div class="field">
         <label for="auto-unwrap-threshold">Auto-unwrap threshold (SCRT)</label>
-        <input type="text" id="auto-unwrap-threshold" inputmode="numeric" class="mono" />
-      </div>
-      <div class="field">
-        <label for="grant-limit">Grant spend limit per user (SCRT)</label>
-        <input type="text" id="grant-limit" inputmode="decimal" class="mono" />
-      </div>
-      <div class="field">
-        <label for="credit-purchase">Credits sold per purchase (SCRT)</label>
-        <input type="text" id="credit-purchase" inputmode="decimal" class="mono" />
-        <div class="hint">
-          How much gas credit one purchase buys, and the ceiling on what a client may request.
-          The provider pays this into the vault out of its own native SCRT, so it is also how
-          fast one caller can draw that reserve down.
-        </div>
-      </div>
-      <div class="field">
-        <label for="bootstrap-grant">First grant before payment (SCRT)</label>
-        <input type="text" id="bootstrap-grant" inputmode="decimal" class="mono" />
-        <div class="hint">
-          What a new address gets before it has paid anything &mdash; enough for one sponsored
-          transaction. This is the most a never-paying address can cost.
-        </div>
-      </div>
-      <div class="field">
-        <label for="grant-expiry">Grant expiry (seconds)</label>
-        <input type="text" id="grant-expiry" inputmode="numeric" class="mono" />
-      </div>
-      <div class="field">
-        <label for="gas-vault">Gas vault contract</label>
-        <input type="text" id="gas-vault" spellcheck="false" class="mono" />
-        <div class="hint">
-          Where credits are bought from. Leave it empty to stop selling. Check it before saving:
-          the vault has no withdrawal, so SCRT paid to the wrong address does not come back.
-        </div>
-      </div>
-      <div class="field">
-        <label for="bootstrap-expiry">First grant expiry (seconds)</label>
-        <input type="text" id="bootstrap-expiry" inputmode="numeric" class="mono" />
-        <div class="hint">
-          Short on purpose. The first grant covers one purchase, and an unused one is left to
-          expire rather than revoked &mdash; reclaiming it costs more than it is worth.
-        </div>
+        <input type="text" id="auto-unwrap-threshold" inputmode="decimal" class="mono" />
       </div>
 
       <hr style="border: none; border-top: 1px solid var(--line); margin: 1.4rem 0;" />
@@ -707,526 +623,232 @@
       <div class="field">
         <label for="new-password">New password (12+ characters)</label>
         <input type="password" id="new-password" autocomplete="new-password" />
+        <div class="hint">
+          It encrypts the wallet's mnemonic, so changing it re-encrypts and signs every other
+          session out.
+        </div>
       </div>
       <div class="row">
         <button class="btn" id="btn-change-password">Change password</button>
-        <span id="password-msg"></span>
+        <span class="msg" id="password-msg"></span>
       </div>
-      <p class="muted" style="margin-bottom: 0;">
-        The seed is re-protected under the new password; the wallet itself is unaffected. All
-        sessions are signed out.
-      </p>
     </div>
     <div class="modal-foot">
       <span class="msg" id="settings-msg"></span>
       <button class="btn ghost" data-close>Close</button>
-      <button class="btn primary" id="btn-save-settings">Save settings</button>
-    </div>
-  </div>
-</div>
-
-<!-- ============ WIZARD ============ -->
-<div class="overlay" id="wizard">
-  <div class="modal">
-    <header>
-      <h3 id="w-title">Set up the provider</h3>
-      <button class="icon-btn hidden" id="w-dismiss" title="Close">&#10005;</button>
-    </header>
-    <div class="wrail" id="wrail"></div>
-
-    <div class="modal-body">
-      <!-- 1. password -->
-      <section class="wstep" data-step="pass">
-        <p class="steplead">
-          Choose an admin password. It protects this dashboard and encrypts the provider's seed
-          phrase. There is no reset &mdash; put it in a password manager before you continue.
-        </p>
-        <div class="field">
-          <label for="w-pass1">Admin password (12+ characters)</label>
-          <input type="password" id="w-pass1" autocomplete="new-password" />
-        </div>
-        <div class="field">
-          <label for="w-pass2">Repeat password</label>
-          <input type="password" id="w-pass2" autocomplete="new-password" />
-        </div>
-        <div class="err" id="w-pass-err"></div>
-      </section>
-
-      <!-- 2. wallet -->
-      <section class="wstep" data-step="wallet">
-        <p class="steplead">
-          The provider needs its own wallet. Generate a fresh one, or import a seed phrase you
-          already hold.
-        </p>
-        <div class="row" style="margin-bottom: 0.9rem;">
-          <button class="btn primary" id="w-gen">Generate new wallet</button>
-          <button class="btn ghost" id="w-imp-toggle">Import instead</button>
-        </div>
-        <div id="w-imp-form" class="hidden">
-          <div class="field">
-            <label for="w-mnemonic">Seed phrase (12 or 24 words)</label>
-            <textarea id="w-mnemonic" rows="3" autocomplete="off" spellcheck="false" class="mono"></textarea>
-          </div>
-          <button class="btn primary" id="w-imp-btn">Import</button>
-        </div>
-        <div class="field hidden" id="w-wallet-ok" style="margin-top: 1rem;">
-          <label>Provider address</label>
-          <div class="mono" id="w-wallet-addr" style="font-size: 0.78rem; word-break: break-all; color: var(--ok);"></div>
-        </div>
-        <div class="err" id="w-wallet-err"></div>
-      </section>
-
-      <!-- 3. settings -->
-      <section class="wstep" data-step="settings">
-        <p class="steplead">
-          The basics. All of these stay editable later from the settings dialog.
-        </p>
-        <div class="field">
-          <label for="w-fee">Fee markup (%)</label>
-          <input type="number" id="w-fee" min="0" max="1000" step="0.5" />
-          <div class="hint">What the provider charges on top of the gas it sponsors.</div>
-        </div>
-        <div class="field">
-          <label for="w-threshold">Auto-unwrap threshold (SCRT)</label>
-          <input type="text" id="w-threshold" inputmode="decimal" class="mono" />
-          <div class="hint">Above this much sSCRT, it is redeemed back into native SCRT automatically.</div>
-        </div>
-        <div class="field">
-          <label for="w-grant-limit">Grant spend limit per user (SCRT)</label>
-          <input type="text" id="w-grant-limit" inputmode="decimal" class="mono" />
-        </div>
-        <div class="field">
-          <label for="w-grant-expiry">Grant expiry (seconds)</label>
-          <input type="text" id="w-grant-expiry" inputmode="numeric" class="mono" />
-        </div>
-        <div class="err" id="w-settings-err"></div>
-      </section>
-
-      <!-- 4. fund -->
-      <section class="wstep" data-step="fund">
-        <p class="steplead">
-          The provider pays users' gas out of its own native SCRT, so it needs a balance before it
-          can sponsor anything.
-        </p>
-        <div class="stat" style="margin-bottom: 1rem;">
-          <div class="label">Provider balance</div>
-          <div class="value" id="w-fund-balance">&mdash;</div>
-        </div>
-        <button class="btn primary wide" id="w-fund-open">Deposit from Keplr</button>
-        <p class="muted" style="margin-bottom: 0;">
-          Or send SCRT to the provider address from anywhere else &mdash; the balance above updates
-          on its own.
-        </p>
-      </section>
-
-      <!-- 5. wrap -->
-      <section class="wstep" data-step="wrap">
-        <p class="steplead">
-          Calibration measures the payment message by actually sending it, and that message moves
-          sSCRT &mdash; so wrap a little native SCRT first.
-        </p>
-        <div class="field">
-          <label for="w-wrap-amount">Amount (SCRT)</label>
-          <input type="text" id="w-wrap-amount" inputmode="decimal" value="1" class="mono" />
-        </div>
-        <div class="row" style="margin-bottom: 0.8rem;">
-          <button class="btn primary job-btn" id="w-wrap-run">Wrap</button>
-          <span class="job-status"></span>
-        </div>
-        <div class="joblog hidden"></div>
-        <p class="muted" style="margin-bottom: 0;">Current sSCRT: <span id="w-sscrt">&mdash;</span></p>
-      </section>
-
-      <!-- 6. calibrate -->
-      <section class="wstep" data-step="calib">
-        <p class="steplead">
-          The last step. Until this constant exists the server refuses to quote, because it would
-          have to guess how much gas a payment costs.
-        </p>
-        <div class="field">
-          <label for="w-calib-samples">Samples</label>
-          <input type="number" id="w-calib-samples" min="3" max="20" value="3" />
-          <div class="hint">A few will be lost to the public endpoint. At least three must succeed.</div>
-        </div>
-        <div class="row" style="margin-bottom: 0.8rem;">
-          <button class="btn primary job-btn" id="w-calib-run">Run calibration</button>
-          <span class="job-status"></span>
-        </div>
-        <div class="joblog hidden"></div>
-        <p class="muted" style="margin-bottom: 0;">Recorded constant: <span id="w-calib-value">&mdash;</span></p>
-      </section>
-
-      <!-- 7. done -->
-      <section class="wstep" data-step="done">
-        <p class="steplead" style="color: var(--ok);">The provider is ready to sponsor transactions.</p>
-        <table class="kv" style="border: 1px solid var(--line); border-radius: var(--r); overflow: hidden;">
-          <tr><td>Address</td><td id="w-done-addr">&mdash;</td></tr>
-          <tr><td>SCRT</td><td id="w-done-scrt">&mdash;</td></tr>
-          <tr><td>sSCRT</td><td id="w-done-sscrt">&mdash;</td></tr>
-          <tr><td>Payment gas</td><td id="w-done-calib">&mdash;</td></tr>
-        </table>
-        <p class="muted">
-          What is left is outside this dashboard: make the server reachable to your users, then run
-          one small end-to-end transaction before announcing it.
-        </p>
-      </section>
-    </div>
-
-    <div class="modal-foot">
-      <span class="msg" id="w-msg"></span>
-      <button class="btn ghost hidden" id="w-back">Back</button>
-      <button class="btn primary" id="w-next">Continue</button>
+      <button class="btn primary" id="btn-save-settings">Save</button>
     </div>
   </div>
 </div>
 
 <script>
+// The operator's view of a gas credit provider.
+//
+// Deliberately plain: no framework, no build step, one file served from memory. What it has to
+// show is small -- four balances, four operations and a list that should normally be empty --
+// and an earlier version of this page was three times the size because it still carried a
+// seven-step setup wizard for a flow that no longer exists.
+//
+// Setup is a checklist rather than a wizard. A wizard has an order and a memory of where you
+// are; a checklist reads the state and says what is missing, which cannot get out of sync with
+// the server and needs no state of its own.
 (function () {
   "use strict";
 
   var TOKEN_KEY = "sscrt-provider-token";
-  var token = null;
-  try { token = localStorage.getItem(TOKEN_KEY); } catch (e) {}
-
   var $ = function (id) { return document.getElementById(id); };
   var $$ = function (sel) { return Array.prototype.slice.call(document.querySelectorAll(sel)); };
 
-  var state = null;             // last /status payload
-  var pollTimer = null;
-  var wizardOpen = false;
-  var wizardStep = null;
-  var wizardDismissed = false;  // this page load only; a reload re-offers it if still incomplete
-  var wizardSettingsFilled = false;
+  var token = null;
+  try { token = localStorage.getItem(TOKEN_KEY); } catch (e) { /* private mode: sign in each time */ }
+
+  var state = null;
   var settingsDirty = false;
-  var keplrAddress = null;
-  var refreshSeq = 0;           // see refresh(): drops out-of-order /status responses
+  var pollTimer = null;
+  var pollMs = 10000;
 
-  // Base units are what the API, the database and the chain speak; SCRT is what a person reads
-  // and types. These two are the only crossing points, and toBase refuses anything it cannot
-  // convert exactly rather than truncating — a silently rounded spend limit is a wrong exposure.
+  // ---------- formatting ----------
+
+  function fmt(uscrt, denom) {
+    return (Number(uscrt) / 1e6).toLocaleString(undefined, { maximumFractionDigits: 6 }) +
+      " " + (denom || "SCRT");
+  }
+  function toScrt(uscrt) { return String(Number(uscrt) / 1e6); }
   function toBase(scrt) {
-    var t = String(scrt).trim();
-    if (!/^\d*\.?\d*$/.test(t) || t === "" || t === ".") return null;
+    // String maths, because a balance that has been through a float is a balance you cannot
+    // trust. Returns null on anything that is not a plain decimal.
+    var t = String(scrt == null ? "" : scrt).trim();
+    if (!/^\d*(\.\d*)?$/.test(t) || t === "" || t === ".") return null;
     var parts = t.split(".");
-    var whole = parts[0] || "0";
-    var frac = parts[1] || "";
+    var frac = (parts[1] || "");
     if (frac.length > 6) return null;
-    while (frac.length < 6) frac += "0";
-    return String(BigInt(whole) * 1000000n + BigInt(frac || "0"));
+    var joined = (parts[0] || "0") + frac + Array(7 - frac.length).join("0");
+    return String(BigInt(joined));
+  }
+  function shortAddr(a) { return a ? a.slice(0, 12) + "…" + a.slice(-6) : "—"; }
+  function setMsg(el, text, cls) {
+    if (!el) return;
+    el.textContent = text || "";
+    el.className = "msg" + (cls ? " " + cls : "");
   }
 
-  function toScrt(base) {
-    var s = String(base || "0").replace(/^-/, "").padStart(7, "0");
-    var out = s.slice(0, -6) + "." + s.slice(-6);
-    return out.replace(/0+$/, "").replace(/\.$/, "");
-  }
-
-  function fmtScrt(uscrt, denom) {
-    return (Number(uscrt) / 1e6).toLocaleString(undefined, { maximumFractionDigits: 6 }) + " " + (denom || "SCRT");
-  }
-  function shortAddr(a) {
-    return a ? a.slice(0, 12) + "…" + a.slice(-6) : "";
-  }
-
-  function authHeaders() {
-    return token ? { Authorization: "Bearer " + token } : {};
-  }
-  function setToken(next) {
-    token = next;
-    try {
-      if (next) localStorage.setItem(TOKEN_KEY, next);
-      else localStorage.removeItem(TOKEN_KEY);
-    } catch (e) {}
-  }
+  // ---------- transport ----------
 
   function api(path, body) {
-    var headers = { "Content-Type": "application/json" };
-    if (token) headers.Authorization = "Bearer " + token;
-    return fetch(path, {
-      method: body === undefined ? "GET" : "POST",
-      headers: headers,
-      body: body === undefined ? undefined : JSON.stringify(body)
-    }).then(function (res) {
-      return res.json().catch(function () { return {}; }).then(function (data) {
-        if (!res.ok) throw new Error(data.message || ("HTTP " + res.status));
-        return data;
+    var init = { method: body === undefined ? "GET" : "POST", headers: {} };
+    if (body !== undefined) {
+      init.headers["content-type"] = "application/json";
+      init.body = JSON.stringify(body);
+    }
+    if (token) init.headers.authorization = "Bearer " + token;
+
+    return fetch(path, init).then(function (resp) {
+      return resp.text().then(function (text) {
+        var parsed = null;
+        try { parsed = JSON.parse(text); } catch (e) { /* handled below */ }
+        if (!resp.ok) {
+          // A 401 means this token is finished. Anything else is a real failure to report; the
+          // difference matters because treating the second as the first logs the operator out
+          // mid-job for no reason.
+          if (resp.status === 401) { signedOut(); }
+          var msg = (parsed && parsed.message) || text.slice(0, 200) || ("HTTP " + resp.status);
+          throw new Error(msg);
+        }
+        return parsed;
       });
     });
   }
 
-  function setMsg(el, text, cls) {
-    if (!el) return;
-    el.textContent = text || "";
-    var base = el.className.replace(/\b(err|ok|warn|muted)\b/g, "").replace(/\s+/g, " ").trim();
-    el.className = cls ? base + " " + cls : base;
+  function signedOut() {
+    token = null;
+    try { localStorage.removeItem(TOKEN_KEY); } catch (e) { /* nothing to remove */ }
+    state = null;
+    showLogin();
   }
 
   // ---------- modals ----------
+
   function openModal(id) { $(id).classList.add("open"); }
   function closeModal(id) { $(id).classList.remove("open"); }
-
-  // The wizard and the seed reveal are dismissed deliberately, never by a stray click or Escape:
-  // one is a setup the operator is halfway through, the other shows a phrase they get once.
-  function isDismissable(ov) { return ov.id !== "wizard" && ov.id !== "m-seed"; }
-
   $$("[data-close]").forEach(function (btn) {
-    btn.addEventListener("click", function () {
+    btn.onclick = function () {
       var overlay = btn.closest(".overlay");
       if (overlay) overlay.classList.remove("open");
-    });
-  });
-  $$(".overlay").forEach(function (ov) {
-    ov.addEventListener("mousedown", function (e) {
-      if (e.target === ov && isDismissable(ov)) ov.classList.remove("open");
-    });
+    };
   });
   document.addEventListener("keydown", function (e) {
     if (e.key !== "Escape") return;
-    $$(".overlay.open").forEach(function (ov) {
-      if (isDismissable(ov)) ov.classList.remove("open");
+    // The seed reveal has no close button on purpose, and Escape must not become one.
+    $$(".overlay.open").forEach(function (o) {
+      if (o.id !== "m-seed" && o.id !== "m-login") o.classList.remove("open");
     });
   });
 
-  // ---------- polling ----------
-  function setPolling(ms) {
-    if (pollTimer) clearInterval(pollTimer);
-    pollTimer = setInterval(refresh, ms);
+  // ---------- sign in ----------
+
+  function showLogin() {
+    var firstRun = !state || state.setupRequired;
+    $("login-title").textContent = firstRun ? "Set a password" : "Sign in";
+    $("login-lead").textContent = firstRun
+      ? "It protects this dashboard and encrypts the provider's mnemonic. There is no way to " +
+        "recover it, and no way to recover the wallet without it."
+      : "Balances, the wallet and settings need the admin password.";
+    $("login-label").textContent = firstRun ? "Admin password (12+ characters)" : "Admin password";
+    $("login-hint").textContent = firstRun ? "Generate it in a password manager. Do not invent one." : "";
+    $("login-password").value = "";
+    $("login-err").textContent = "";
+    openModal("m-login");
+    $("login-password").focus();
   }
 
-  // ---------- auth ----------
-  $("login-btn").onclick = function () {
-    setMsg($("login-error"), "");
-    api("/admin/login", { password: $("login-password").value }).then(function (r) {
-      setToken(r.token);
-      $("login-password").value = "";
-      return refresh();
-    }).catch(function (err) { setMsg($("login-error"), err.message, "err"); });
+  $("login-run").onclick = function () {
+    var password = $("login-password").value;
+    var firstRun = !state || state.setupRequired;
+    if (firstRun && password.length < 12) {
+      $("login-err").textContent = "at least 12 characters";
+      return;
+    }
+    api(firstRun ? "/admin/setup" : "/admin/login", { password: password })
+      .then(function (result) {
+        token = result.token;
+        try { localStorage.setItem(TOKEN_KEY, token); } catch (e) { /* session-only, fine */ }
+        closeModal("m-login");
+        return refresh();
+      })
+      .catch(function (err) { $("login-err").textContent = err.message; });
   };
   $("login-password").addEventListener("keydown", function (e) {
-    if (e.key === "Enter") $("login-btn").click();
+    if (e.key === "Enter") $("login-run").click();
   });
-
   $("btn-logout").onclick = function () {
-    api("/admin/logout", {}).catch(function () {}).then(function () {
-      setToken(null);
-      wizardDismissed = false;
-      refresh();
-    });
-  };
-
-  $("btn-change-password").onclick = function () {
-    var msg = $("password-msg");
-    setMsg(msg, "");
-    api("/admin/password", {
-      currentPassword: $("current-password").value,
-      newPassword: $("new-password").value
-    }).then(function () {
-      $("current-password").value = $("new-password").value = "";
-      setMsg(msg, "changed — sign in again", "ok");
-      setToken(null);
-      setTimeout(function () { closeModal("m-settings"); refresh(); }, 1200);
-    }).catch(function (err) { setMsg(msg, err.message, "err"); });
-  };
-
-  // ---------- address copy ----------
-  $("addr-pill").onclick = function () {
-    var addr = state && state.providerAddress;
-    if (!addr || !navigator.clipboard) return;
-    navigator.clipboard.writeText(addr).then(function () {
-      var el = $("addr-text"), old = el.textContent;
-      el.textContent = "copied";
-      setTimeout(function () { el.textContent = old; }, 1000);
-    }, function () {});
+    api("/admin/logout", {}).catch(function () { /* the token is going either way */ });
+    signedOut();
   };
 
   // ---------- wallet ----------
-  function revealSeed(mnemonic) {
-    $("seed-words").textContent = mnemonic;
-    $("seed-ack-check").checked = false;
-    $("seed-ack-btn").disabled = true;
-    openModal("m-seed");
-  }
-  $("seed-ack-check").onchange = function () {
-    $("seed-ack-btn").disabled = !$("seed-ack-check").checked;
+
+  $("btn-wallet").onclick = function () {
+    setMsg($("wallet-msg"), "");
+    openModal("m-wallet");
   };
-  $("seed-ack-btn").onclick = function () {
+
+  $("wallet-generate").onclick = function () {
+    if (state && state.walletConfigured &&
+        !confirm("A wallet is already configured. Generating replaces it, and anything left in " +
+                 "the old one is unreachable unless you still have its mnemonic. Continue?")) return;
+    api("/admin/wallet/generate", {})
+      .then(function (result) {
+        // Shown once. Nothing else may cover it, and nothing closes it but the acknowledgement.
+        $("seed-words").textContent = result.mnemonic;
+        $("seed-ack").checked = false;
+        $("seed-done").disabled = true;
+        openModal("m-seed");
+        return refresh();
+      })
+      .catch(function (err) { setMsg($("wallet-msg"), err.message, "err"); });
+  };
+  $("seed-ack").onchange = function () { $("seed-done").disabled = !$("seed-ack").checked; };
+  $("seed-done").onclick = function () {
     $("seed-words").textContent = "";
     closeModal("m-seed");
-    refresh();
   };
 
-  function generateWallet(errEl) {
-    setMsg(errEl, "");
-    if (state && state.walletConfigured) {
-      if (!confirm("Generate a NEW wallet? The current one stops being used — move its funds out first.")) return;
-    }
-    api("/admin/wallet/generate", {}).then(function (r) {
-      revealSeed(r.mnemonic);
-      return refresh();
-    }).catch(function (err) { setMsg(errEl, err.message, "err"); });
-  }
-  function importWallet(textarea, errEl) {
-    setMsg(errEl, "");
-    return api("/admin/wallet/import", { mnemonic: textarea.value }).then(function () {
-      textarea.value = "";
-      return refresh();
-    }).catch(function (err) {
-      setMsg(errEl, err.message, "err");
-      throw err;
-    });
-  }
-
-  $("btn-generate").onclick = function () { generateWallet($("wallet-error")); };
-  $("btn-import-toggle").onclick = function () { $("import-form").classList.toggle("hidden"); };
-  $("btn-import").onclick = function () {
-    importWallet($("mnemonic"), $("wallet-error")).then(function () {
-      $("import-form").classList.add("hidden");
-      closeModal("m-wallet");
-    }, function () {});
+  $("wallet-import").onclick = function () {
+    var mnemonic = $("wallet-mnemonic").value.trim();
+    if (!mnemonic) { setMsg($("wallet-msg"), "paste a mnemonic first", "err"); return; }
+    api("/admin/wallet/import", { mnemonic: mnemonic })
+      .then(function (result) {
+        $("wallet-mnemonic").value = "";
+        setMsg($("wallet-msg"), "imported " + shortAddr(result.address), "ok");
+        return refresh();
+      })
+      .catch(function (err) { setMsg($("wallet-msg"), err.message, "err"); });
   };
 
   // ---------- jobs ----------
+
+  // One job at a time is a correctness requirement, not a simplification: every job broadcasts
+  // from the provider's own account, and two at once race its sequence number.
   function startJob(path, body, confirmText) {
     if (confirmText && !confirm(confirmText)) return;
-    $$(".job-status").forEach(function (el) { setMsg(el, ""); });
-    api(path, body).then(refresh).catch(function (err) {
-      $$(".job-status").forEach(function (el) { setMsg(el, err.message, "err"); });
-    });
+    $$(".joblog").forEach(function (el) { el.textContent = ""; el.classList.remove("hidden"); });
+    api(path, body)
+      .then(function (result) { renderJob(result.job); setPolling(2000); })
+      .catch(function (err) {
+        $$(".job-status").forEach(function (el) { setMsg(el, err.message, "err"); });
+      });
   }
-
-  function wrapAction(inputId) {
-    var typed = $(inputId).value.trim();
-    var amount = toBase(typed);
-    if (amount === null) {
-      $$(".job-status").forEach(function (el) { setMsg(el, "amount is in SCRT, at most six decimals", "err"); });
-      return;
-    }
-    startJob("/admin/wrap", { amountUscrt: amount },
-      "Wrap " + typed + " SCRT into sSCRT? This is a real transaction and costs gas.");
-  }
-  function calibrateAction(inputId) {
-    var samples = Number($(inputId).value) || 3;
-    startJob("/admin/calibrate", { samples: samples },
-      "Run calibration? This sends " + samples + " real transactions and spends gas on each.");
-  }
-
-  $("btn-wrap").onclick = function () { openModal("m-wrap"); };
-  $("btn-calibrate").onclick = function () { openModal("m-calib"); };
-  $("wrap-run").onclick = function () { wrapAction("wrap-amount"); };
-  $("calib-run").onclick = function () { calibrateAction("calib-samples"); };
-  $("w-wrap-run").onclick = function () { wrapAction("w-wrap-amount"); };
-  $("w-calib-run").onclick = function () { calibrateAction("w-calib-samples"); };
-
-  // ---------- credit delivery, and deleting what is no longer needed ----------
-  // A paid-for, undelivered purchase is money the provider owes, so it gets a button rather than
-  // a number. Two separate actions per row on purpose: "retry" says try again, "close" says do
-  // not -- and getting those the wrong way round either grants twice or never.
-  function renderOutstanding() {
-    var rows = (state && state.outstanding) || [];
-    $("outstanding-panel").classList.toggle("hidden", rows.length === 0);
-    $("deliver-summary").textContent =
-      rows.length === 0 ? "Nothing outstanding" : rows.length + " paid for and not yet delivered";
-    $("deliver-summary").style.color = rows.length > 0 ? "var(--warn)" : "";
-    if (rows.length === 0) return;
-
-    var table = $("outstanding-table");
-    table.innerHTML = "";
-    rows.forEach(function (row) {
-      var tr = document.createElement("tr");
-      var what = document.createElement("td");
-      what.innerHTML =
-        '<span class="mono">' + row.address + "</span><br>" +
-        toScrt(row.credits_uscrt) + " SCRT of credits, paid " + toScrt(row.sscrt_paid) + " sSCRT" +
-        '<br><span class="muted">' + row.state + ", attempt " + row.attempts +
-        (row.last_error ? " — " + row.last_error : "") + "</span>";
-      var actions = document.createElement("td");
-      var retry = document.createElement("button");
-      retry.className = "btn";
-      retry.textContent = "Retry";
-      retry.onclick = function () { purchaseAction("/admin/purchase/requeue", row.quote_id); };
-      var close = document.createElement("button");
-      close.className = "btn ghost";
-      close.textContent = "Close";
-      close.onclick = function () {
-        if (!confirm("Close this purchase without delivering? Only do this if you have confirmed on chain that the credits arrived, or you are writing it off.")) return;
-        purchaseAction("/admin/purchase/close", row.quote_id);
-      };
-      actions.appendChild(retry);
-      actions.appendChild(close);
-      tr.appendChild(what);
-      tr.appendChild(actions);
-      table.appendChild(tr);
-    });
-  }
-
-  function purchaseAction(path, quoteId) {
-    api(path, { quoteId: quoteId })
-      .then(function () { return refresh(); })
-      .catch(function (err) { setMsg($("footer"), err.message, "err"); });
-  }
-
-  $("btn-deliver").onclick = function () {
-    api("/admin/deliver", {})
-      .then(function (result) {
-        setMsg($("deliver-summary"), "delivered " + result.delivered + ", " + result.remaining + " still outstanding", "ok");
-        return refresh();
-      })
-      .catch(function (err) { setMsg($("deliver-summary"), err.message, "err"); });
-  };
-
-  function renderPurge() {
-    var d = state && state.legacyData;
-    if (!d) return;
-    var total = d.permits + d.quotes + d.txOutcomes + d.deposits + d.grants + d.contractCalibrations + d.settings;
-    $("purge-summary").textContent =
-      total === 0
-        ? "Nothing left to delete"
-        : d.permits + " permits, " + d.quotes + " quotes, " + d.txOutcomes +
-          " transaction records and " + (d.deposits + d.grants + d.contractCalibrations + d.settings) +
-          " other rows";
-  }
-
-  $("btn-purge").onclick = function () {
-    var d = (state && state.legacyData) || {};
-    if (!confirm(
-      "Delete " + (d.permits || 0) + " balance permits, " + (d.quotes || 0) + " quotes (which hold the " +
-      "recipient and amount of every transfer this server ever sponsored) and " + (d.txOutcomes || 0) +
-      " transaction records?\n\nThis cannot be undone."
-    )) return;
-    api("/admin/purge", {})
-      .then(function (result) {
-        setMsg(
-          $("purge-summary"),
-          "deleted " + result.deleted.permits + " permits, " + result.deleted.quotes + " quotes, " +
-            result.deleted.txOutcomes + " transaction records" +
-            (result.vacuumed ? "" : " — but the file could not be compacted, so the pages are still on disk"),
-          result.vacuumed ? "ok" : "err",
-        );
-        return refresh();
-      })
-      .catch(function (err) { setMsg($("purge-summary"), err.message, "err"); });
-  };
-
-  $("btn-wallet").onclick = function () { openModal("m-wallet"); };
-  $("btn-settings").onclick = function () { openModal("m-settings"); };
 
   function renderJob(job) {
     var running = !!(job && job.status === "running");
-    $$(".job-btn").forEach(function (b) { b.disabled = running; });
-
     $("job-panel").classList.toggle("hidden", !job);
-    if (!job) {
-      $$(".joblog").forEach(function (el) { el.classList.add("hidden"); });
-      return;
-    }
+    $$(".job-btn").forEach(function (b) { b.disabled = running; });
+    if (!job) { setPolling(10000); return; }
 
-    var text = job.log.join("\n") || "starting…";
     $$(".joblog").forEach(function (el) {
+      el.textContent = (job.log || []).join("\n");
+      el.scrollTop = el.scrollHeight;
       el.classList.remove("hidden");
-      if (el.textContent !== text) {
-        el.textContent = text;
-        el.scrollTop = el.scrollHeight;
-      }
     });
     $("job-title").textContent = job.name;
 
@@ -1239,408 +861,292 @@
     setPolling(running ? 2000 : 10000);
   }
 
-  // ---------- settings ----------
-  ["fee-markup", "auto-unwrap-enabled", "auto-unwrap-threshold", "grant-limit", "bootstrap-grant", "credit-purchase", "grant-expiry", "bootstrap-expiry", "gas-vault"]
-    .forEach(function (id) {
-      $(id).addEventListener("input", function () { settingsDirty = true; });
+  $("btn-wrap").onclick = function () { openModal("m-wrap"); };
+  $("wrap-run").onclick = function () {
+    var amount = toBase($("wrap-amount").value);
+    if (amount === null || amount === "0") {
+      $$(".job-status").forEach(function (el) {
+        setMsg(el, "amounts are in SCRT, at most six decimal places", "err");
+      });
+      return;
+    }
+    startJob("/admin/wrap", { amountUscrt: amount },
+      "Wrap " + $("wrap-amount").value + " SCRT into sSCRT? This is a real transaction.");
+  };
+
+  $("btn-calibrate").onclick = function () { openModal("m-calib"); };
+  $("calib-run").onclick = function () {
+    var samples = Number($("calib-samples").value) || 3;
+    startJob("/admin/calibrate", { samples: samples },
+      "Run calibration? This sends " + samples + " real transactions and spends gas on each.");
+  };
+
+  // ---------- owed ----------
+
+  // A paid-for, undelivered purchase is money the provider owes, so it gets buttons rather than
+  // a number. Two per row on purpose: "retry" says try again, "close" says do not -- and getting
+  // those the wrong way round either grants twice or never.
+  function renderOwed() {
+    var rows = (state && state.outstanding) || [];
+    $("owed-panel").classList.toggle("hidden", rows.length === 0);
+    $("deliver-summary").textContent = rows.length === 0
+      ? "Nothing outstanding"
+      : rows.length + " paid for and not yet delivered";
+    $("deliver-summary").style.color = rows.length > 0 ? "var(--warn)" : "";
+    if (rows.length === 0) return;
+
+    var table = $("owed-table");
+    table.innerHTML = "";
+    rows.forEach(function (row) {
+      var tr = document.createElement("tr");
+
+      var what = document.createElement("td");
+      var addr = document.createElement("div");
+      addr.className = "mono";
+      addr.textContent = row.address;
+      var line = document.createElement("div");
+      line.textContent = fmt(row.credits_uscrt) + " of credits, paid " +
+        fmt(row.sscrt_paid, "sSCRT") + " — " + row.state + ", attempt " + row.attempts;
+      var why = document.createElement("div");
+      why.className = "muted";
+      why.textContent = row.last_error || "";
+      what.appendChild(addr);
+      what.appendChild(line);
+      if (row.last_error) what.appendChild(why);
+
+      var actions = document.createElement("td");
+      var retry = document.createElement("button");
+      retry.className = "btn";
+      retry.textContent = "Retry";
+      retry.onclick = function () { purchaseAction("/admin/purchase/requeue", row.quote_id); };
+      var close = document.createElement("button");
+      close.className = "btn ghost";
+      close.textContent = "Close";
+      close.onclick = function () {
+        if (!confirm("Close this purchase without delivering? Only do this once you have " +
+                     "confirmed on chain that the credits arrived, or you are writing it off.")) return;
+        purchaseAction("/admin/purchase/close", row.quote_id);
+      };
+      actions.appendChild(retry);
+      actions.appendChild(close);
+
+      tr.appendChild(what);
+      tr.appendChild(actions);
+      table.appendChild(tr);
     });
+  }
+
+  function purchaseAction(path, quoteId) {
+    api(path, { quoteId: quoteId })
+      .then(refresh)
+      .catch(function (err) { setMsg($("footer"), err.message, "err"); });
+  }
+
+  $("btn-deliver").onclick = function () {
+    api("/admin/deliver", {})
+      .then(function (result) {
+        setMsg($("deliver-summary"),
+          "delivered " + result.delivered + ", " + result.remaining + " still outstanding", "ok");
+        return refresh();
+      })
+      .catch(function (err) { setMsg($("deliver-summary"), err.message, "err"); });
+  };
+
+  // ---------- deleting old data ----------
+
+  function renderPurge() {
+    var d = state && state.legacyData;
+    if (!d) return;
+    var total = d.permits + d.quotes + d.txOutcomes + d.deposits + d.grants +
+      d.contractCalibrations + d.settings;
+    $("purge-summary").textContent = total === 0
+      ? "Nothing left to delete"
+      : d.permits + " permits, " + d.quotes + " quotes, " + d.txOutcomes +
+        " transaction records and " +
+        (d.deposits + d.grants + d.contractCalibrations + d.settings) + " other rows";
+  }
+
+  $("btn-purge").onclick = function () {
+    var d = (state && state.legacyData) || {};
+    var warning = "Delete " + (d.permits || 0) + " balance permits, " + (d.quotes || 0) +
+      " quotes (which hold the recipient and amount of every transfer this server ever " +
+      "sponsored) and " + (d.txOutcomes || 0) + " transaction records?\n\nThis cannot be undone.";
+    if (!confirm(warning)) return;
+    api("/admin/purge", {})
+      .then(function (result) {
+        setMsg($("purge-summary"),
+          "deleted " + result.deleted.permits + " permits, " + result.deleted.quotes +
+            " quotes, " + result.deleted.txOutcomes + " transaction records" +
+            (result.vacuumed ? "" : " — but the file could not be compacted, so the pages are still on disk"),
+          result.vacuumed ? "ok" : "err");
+        return refresh();
+      })
+      .catch(function (err) { setMsg($("purge-summary"), err.message, "err"); });
+  };
+
+  // ---------- settings ----------
+
+  var SETTING_IDS = ["gas-vault", "credit-purchase", "fee-markup", "bootstrap-grant",
+                     "bootstrap-expiry", "auto-unwrap-enabled", "auto-unwrap-threshold"];
+  SETTING_IDS.forEach(function (id) {
+    $(id).addEventListener("input", function () { settingsDirty = true; });
+  });
 
   function fillSettings(s) {
+    // Not while it is being edited: /status polls every few seconds and would otherwise
+    // overwrite what the operator is halfway through typing.
     if (settingsDirty) return;
+    $("gas-vault").value = s.gasVaultAddress;
+    $("credit-purchase").value = toScrt(s.creditPurchaseUscrt);
     $("fee-markup").value = s.feeMarkupPercent;
+    $("bootstrap-grant").value = toScrt(s.bootstrapGrantUscrt);
+    $("bootstrap-expiry").value = s.bootstrapGrantExpirySeconds;
     $("auto-unwrap-enabled").value = String(s.autoUnwrapEnabled);
     $("auto-unwrap-threshold").value = toScrt(s.autoUnwrapThresholdUscrt);
-    $("grant-limit").value = toScrt(s.grantSpendLimitUscrt);
-    $("bootstrap-grant").value = toScrt(s.bootstrapGrantUscrt);
-    $("credit-purchase").value = toScrt(s.creditPurchaseUscrt);
-    $("grant-expiry").value = s.grantExpirySeconds;
-    $("bootstrap-expiry").value = s.bootstrapGrantExpirySeconds;
-    $("gas-vault").value = s.gasVaultAddress;
   }
+
+  $("btn-settings").onclick = function () {
+    setMsg($("settings-msg"), "");
+    openModal("m-settings");
+  };
 
   $("btn-save-settings").onclick = function () {
     var msg = $("settings-msg");
     setMsg(msg, "");
     var amounts = {
-      autoUnwrapThresholdUscrt: toBase($("auto-unwrap-threshold").value),
-      grantSpendLimitUscrt: toBase($("grant-limit").value),
-      bootstrapGrantUscrt: toBase($("bootstrap-grant").value),
       creditPurchaseUscrt: toBase($("credit-purchase").value),
+      bootstrapGrantUscrt: toBase($("bootstrap-grant").value),
+      autoUnwrapThresholdUscrt: toBase($("auto-unwrap-threshold").value)
     };
     for (var key in amounts) {
       if (amounts[key] === null) {
-        setMsg(msg, "amounts are in SCRT, with at most six decimal places", "err");
+        setMsg(msg, "amounts are in SCRT, at most six decimal places", "err");
         return;
       }
     }
     api("/admin/settings", {
-      feeMarkupPercent: Number($("fee-markup").value),
-      autoUnwrapEnabled: $("auto-unwrap-enabled").value === "true",
-      autoUnwrapThresholdUscrt: amounts.autoUnwrapThresholdUscrt,
-      grantSpendLimitUscrt: amounts.grantSpendLimitUscrt,
-      bootstrapGrantUscrt: amounts.bootstrapGrantUscrt,
+      gasVaultAddress: $("gas-vault").value.trim(),
       creditPurchaseUscrt: amounts.creditPurchaseUscrt,
-      grantExpirySeconds: Number($("grant-expiry").value),
+      feeMarkupPercent: Number($("fee-markup").value),
+      bootstrapGrantUscrt: amounts.bootstrapGrantUscrt,
       bootstrapGrantExpirySeconds: Number($("bootstrap-expiry").value),
-      gasVaultAddress: $("gas-vault").value.trim()
-    }).then(function () {
-      settingsDirty = false;
-      setMsg(msg, "saved", "ok");
-      return refresh();
-    }).catch(function (err) { setMsg(msg, err.message, "err"); });
-  };
-
-  // ---------- Keplr deposit ----------
-  function openDeposit() {
-    setMsg($("dep-msg"), "");
-    $("dep-target").textContent = (state && state.providerAddress) || "no wallet configured yet";
-    openModal("m-deposit");
-  }
-  $("btn-deposit").onclick = openDeposit;
-  $("w-fund-open").onclick = openDeposit;
-
-  // Self-hosted, never a CDN: this page also displays a freshly generated seed phrase, so nothing
-  // third-party gets to execute in its origin.
-  function loadDepositLib() {
-    return import("/vendor/secret-deposit.js").catch(function () {
-      throw new Error("the Keplr helper bundle is missing — run `npm run build:web` and redeploy");
-    });
-  }
-
-  function refreshKeplrBalance() {
-    if (!keplrAddress || !state || !state.lcdUrl) return;
-    var url = state.lcdUrl.replace(/\/$/, "") +
-      "/cosmos/bank/v1beta1/balances/" + keplrAddress + "/by_denom?denom=uscrt";
-    fetch(url).then(function (r) { return r.json(); }).then(function (d) {
-      $("dep-balance").textContent = "balance: " + fmtScrt((d.balance && d.balance.amount) || "0");
-    }).catch(function () { $("dep-balance").textContent = ""; });
-  }
-
-  $("dep-connect").onclick = function () {
-    setMsg($("dep-msg"), "connecting…", "muted");
-    loadDepositLib().then(function (lib) {
-      return lib.connectKeplr(state.chainId);
-    }).then(function (key) {
-      keplrAddress = key.address;
-      $("dep-account").textContent = key.address + (key.name ? "  (" + key.name + ")" : "");
-      $("dep-disconnected").classList.add("hidden");
-      $("dep-connected").classList.remove("hidden");
-      setMsg($("dep-msg"), "");
-      refreshKeplrBalance();
-    }).catch(function (err) { setMsg($("dep-msg"), err.message, "err"); });
-  };
-
-  $("dep-send").onclick = function () {
-    var scrt = Number($("dep-amount").value);
-    if (!(scrt > 0)) { setMsg($("dep-msg"), "enter an amount greater than zero", "err"); return; }
-    var to = state && state.providerAddress;
-    if (!to) { setMsg($("dep-msg"), "no provider wallet configured yet", "err"); return; }
-
-    $("dep-send").disabled = true;
-    setMsg($("dep-msg"), "approve the transaction in Keplr…", "warn");
-    loadDepositLib().then(function (lib) {
-      return lib.sendScrt({
-        chainId: state.chainId,
-        lcdUrl: state.lcdUrl,
-        from: keplrAddress,
-        to: to,
-        amountUscrt: String(Math.round(scrt * 1e6)),
-        gasPriceInFeeDenom: Number(state.nativeGasPriceUscrt)
-      });
-    }).then(function (res) {
-      // A submit response is not an outcome: the transaction can still fail in the block.
-      if (res.code !== 0) throw new Error("chain rejected it (code " + res.code + "): " + res.rawLog);
-      setMsg($("dep-msg"), "sent — " + res.txHash, "ok");
-      refreshKeplrBalance();
-      return refresh();
-    }).catch(function (err) {
-      setMsg($("dep-msg"), err.message, "err");
-    }).then(function () { $("dep-send").disabled = false; });
-  };
-
-  // ---------- wizard ----------
-  var STEPS = ["pass", "wallet", "settings", "fund", "wrap", "calib", "done"];
-  var STEP_TITLES = {
-    pass: "Admin password",
-    wallet: "Provider wallet",
-    settings: "Basic settings",
-    fund: "Fund the provider",
-    wrap: "Wrap into sSCRT",
-    calib: "Calibrate gas",
-    done: "Ready"
-  };
-
-  $("wrail").innerHTML = STEPS.map(function () { return '<div class="seg"></div>'; }).join("");
-
-  function goStep(name) {
-    wizardStep = name;
-    $$(".wstep").forEach(function (s) { s.classList.toggle("show", s.getAttribute("data-step") === name); });
-    $("w-title").textContent = STEP_TITLES[name];
-    var idx = STEPS.indexOf(name);
-    Array.prototype.forEach.call($("wrail").children, function (seg, i) {
-      seg.className = "seg" + (i < idx ? " done" : (i === idx ? " now" : ""));
-    });
-    $("w-back").classList.toggle("hidden", idx <= 0 || name === "done");
-    $("w-next").textContent = name === "done" ? "Open dashboard" : "Continue";
-    // Errors belong to the step that produced them; carrying one into the next step reads as a
-    // fresh failure that never happened.
-    ["w-msg", "w-pass-err", "w-wallet-err", "w-settings-err"].forEach(function (id) {
-      setMsg($(id), "");
-    });
-    applyWizardState();
-  }
-
-  // The first step whose precondition is still unmet, so a half-finished setup resumes where it
-  // stopped instead of walking the operator back through what is already done.
-  function firstUnmetStep() {
-    if (!state || state.setupRequired) return "pass";
-    if (!state.walletConfigured) return "wallet";
-    if (!state.balances || state.balances.uscrt === "0") return "fund";
-    if (!state.balances || state.balances.sscrt === "0") return "wrap";
-    if (!state.paymentGasConstant) return "calib";
-    return "done";
-  }
-
-  function setupIncomplete() {
-    return !state || state.setupRequired || !state.walletConfigured || !state.paymentGasConstant;
-  }
-
-  function openWizard(step) {
-    wizardOpen = true;
-    $("wizard").classList.add("open");
-    // Nothing to go back to before a password exists, so that one step has no exit.
-    $("w-dismiss").classList.toggle("hidden", !!(state && state.setupRequired));
-    goStep(step || firstUnmetStep());
-  }
-  function closeWizard() {
-    wizardOpen = false;
-    wizardDismissed = true;
-    $("wizard").classList.remove("open");
-  }
-  $("w-dismiss").onclick = closeWizard;
-  $("btn-wizard").onclick = function () { wizardDismissed = false; openWizard(); };
-
-  $("w-back").onclick = function () {
-    var idx = STEPS.indexOf(wizardStep);
-    if (idx > 0) goStep(STEPS[idx - 1]);
-  };
-
-  $("w-next").onclick = function () {
-    if (wizardStep === "done") { closeWizard(); return; }
-    var idx = STEPS.indexOf(wizardStep);
-    var advance = function () { goStep(STEPS[idx + 1]); };
-
-    if (wizardStep === "pass") {
-      setMsg($("w-pass-err"), "");
-      if (!state.setupRequired) { advance(); return; }  // already set; just moving through
-      var p1 = $("w-pass1").value, p2 = $("w-pass2").value;
-      if (p1 !== p2) { setMsg($("w-pass-err"), "passwords do not match", "err"); return; }
-      api("/admin/setup", { password: p1 }).then(function (r) {
-        setToken(r.token);
-        $("w-pass1").value = $("w-pass2").value = "";
-        return refresh();
-      }).then(advance).catch(function (err) { setMsg($("w-pass-err"), err.message, "err"); });
-      return;
-    }
-
-    if (wizardStep === "wallet") {
-      if (!state.walletConfigured) {
-        setMsg($("w-wallet-err"), "generate or import a wallet first", "err");
-        return;
-      }
-      advance();
-      return;
-    }
-
-    if (wizardStep === "settings") {
-      setMsg($("w-settings-err"), "");
-      api("/admin/settings", {
-        feeMarkupPercent: Number($("w-fee").value),
-        autoUnwrapThresholdUscrt: toBase($("w-threshold").value),
-        grantSpendLimitUscrt: toBase($("w-grant-limit").value),
-        grantExpirySeconds: Number($("w-grant-expiry").value)
-      }).then(function () {
+      autoUnwrapEnabled: $("auto-unwrap-enabled").value === "true",
+      autoUnwrapThresholdUscrt: amounts.autoUnwrapThresholdUscrt
+    })
+      .then(function () {
         settingsDirty = false;
+        setMsg(msg, "saved", "ok");
         return refresh();
-      }).then(advance).catch(function (err) { setMsg($("w-settings-err"), err.message, "err"); });
-      return;
-    }
-
-    if (wizardStep === "fund") {
-      // Not a hard gate: the operator may be funding from elsewhere and come back to it.
-      if (!state.balances || state.balances.uscrt === "0") {
-        setMsg($("w-msg"), "the provider still has no SCRT — the next steps will fail without it", "warn");
-      }
-      advance();
-      return;
-    }
-
-    if (wizardStep === "wrap") {
-      if (!state.balances || state.balances.sscrt === "0") {
-        setMsg($("w-msg"), "calibration needs sSCRT — wrap some first", "warn");
-        return;
-      }
-      advance();
-      return;
-    }
-
-    if (wizardStep === "calib") {
-      if (!state.paymentGasConstant) {
-        setMsg($("w-msg"), "run the calibration before finishing", "warn");
-        return;
-      }
-      advance();
-      return;
-    }
+      })
+      .catch(function (err) { setMsg(msg, err.message, "err"); });
   };
 
-  $("w-gen").onclick = function () { generateWallet($("w-wallet-err")); };
-  $("w-imp-toggle").onclick = function () { $("w-imp-form").classList.toggle("hidden"); };
-  $("w-imp-btn").onclick = function () {
-    importWallet($("w-mnemonic"), $("w-wallet-err")).then(function () {
-      $("w-imp-form").classList.add("hidden");
-    }, function () {});
+  $("btn-change-password").onclick = function () {
+    var msg = $("password-msg");
+    setMsg(msg, "");
+    api("/admin/password", {
+      currentPassword: $("current-password").value,
+      newPassword: $("new-password").value
+    })
+      .then(function () {
+        $("current-password").value = "";
+        $("new-password").value = "";
+        // Changing it re-encrypts the mnemonic and invalidates every session, this one included.
+        setMsg(msg, "changed — signing in again", "ok");
+        setTimeout(signedOut, 900);
+      })
+      .catch(function (err) { setMsg(msg, err.message, "err"); });
   };
 
-  function applyWizardState() {
-    if (!wizardOpen || !state) return;
+  // ---------- setup checklist ----------
 
-    if (state.walletConfigured) {
-      $("w-wallet-ok").classList.remove("hidden");
-      $("w-wallet-addr").textContent = state.providerAddress;
-    } else {
-      $("w-wallet-ok").classList.add("hidden");
-    }
+  // What is missing, in the order it has to be fixed. No wizard: this reads the live state, so
+  // it cannot disagree with the server about where setup has got to.
+  function renderSetup(data) {
+    var missing = [];
+    if (!data.walletConfigured) missing.push("no provider wallet — open Wallet and generate or import one");
+    else if (data.balances && data.balances.uscrt === "0") missing.push("the wallet holds no native SCRT, so no credit can be sold");
+    if (!data.gasVaultAddress) missing.push("no gas vault set — open Settings");
+    if (!data.paymentGasConstant) missing.push("payment gas is not calibrated, so every quote is refused");
 
-    // Filled once: the 10s poll must not overwrite what the operator is typing.
-    if (state.settings && !wizardSettingsFilled) {
-      $("w-fee").value = state.settings.feeMarkupPercent;
-      $("w-threshold").value = toScrt(state.settings.autoUnwrapThresholdUscrt);
-      $("w-grant-limit").value = toScrt(state.settings.grantSpendLimitUscrt);
-      $("w-grant-expiry").value = state.settings.grantExpirySeconds;
-      wizardSettingsFilled = true;
-    }
-
-    var b = state.balances;
-    var calib = state.paymentGasConstant ? state.paymentGasConstant + " gas" : null;
-    $("w-fund-balance").textContent = b ? fmtScrt(b.uscrt) : "—";
-    $("w-sscrt").textContent = b ? fmtScrt(b.sscrt) : "—";
-    $("w-calib-value").textContent = calib || "not calibrated";
-    $("w-done-addr").textContent = state.providerAddress ? shortAddr(state.providerAddress) : "—";
-    $("w-done-scrt").textContent = b ? fmtScrt(b.uscrt) : "—";
-    $("w-done-sscrt").textContent = b ? fmtScrt(b.sscrt) : "—";
-    $("w-done-calib").textContent = calib || "—";
+    $("setup-banner").classList.toggle("hidden", missing.length === 0);
+    $("setup-banner-text").textContent = missing.length ? missing[0] : "";
   }
 
   // ---------- render ----------
-  function showScreen(which) {
-    $("screen-login").classList.toggle("hidden", which !== "login");
-    $("screen-app").classList.toggle("hidden", which !== "app");
-    var authed = which === "app";
-    $("btn-settings").classList.toggle("hidden", !authed);
-    $("btn-logout").classList.toggle("hidden", !authed);
-    $("addr-pill").classList.toggle("hidden", !authed || !(state && state.providerAddress));
-  }
 
   function render(data) {
     state = data;
-    $("chain-id").textContent = data.chainId || "—";
 
-    if (data.setupRequired) {
-      showScreen("none");
-      if (!wizardOpen) openWizard("pass");
-      else applyWizardState();
-      return;
-    }
+    if (data.setupRequired || !data.authenticated) { showLogin(); return; }
+    closeModal("m-login");
 
-    if (!data.authenticated) {
-      if (token) setToken(null);
-      if (wizardOpen) { wizardOpen = false; $("wizard").classList.remove("open"); }
-      wizardDismissed = false;
-      showScreen("login");
-      setPolling(10000);
-      return;
-    }
-
-    showScreen("app");
-    $("addr-text").textContent = shortAddr(data.providerAddress);
-
-    var b = data.balances;
-    $("stat-scrt").textContent = b ? fmtScrt(b.uscrt) : "—";
-    $("stat-sscrt").textContent = b ? fmtScrt(b.sscrt) : "—";
-    $("stat-calib").textContent = data.paymentGasConstant ? String(data.paymentGasConstant) : "none";
-    $("stat-calib-sub").textContent = data.paymentGasConstant ? "calibrated constant" : "quotes are refused";
-    $("stat-calib-sub").style.color = data.paymentGasConstant ? "" : "var(--warn)";
-    $("stat-fee").textContent = data.config.feeMarkupPercent + " %";
-    $("kv-vault").textContent = data.gasVaultAddress ? shortAddr(data.gasVaultAddress) : "not set — credits cannot be sold";
-    // The vault's balance is also the sum of every allowance it still owes, so one figure says
-    // whether the credits sold are backed.
-    $("kv-vault-balance").textContent = data.vault ? fmtScrt(data.vault.balance) : "—";
-    if (data.sales) {
-      $("kv-sales").textContent =
-        data.sales.sales + (data.sales.sales === 1 ? " sale, " : " sales, ") +
-        fmtScrt(data.sales.creditsSold) + " of credits for " + fmtScrt(data.sales.sscrtReceived, "sSCRT");
-    }
-
-    $("wallet-desc").textContent = data.walletConfigured
-      ? data.providerAddress
-      : "not configured — the server cannot sponsor anything";
+    $("provider-addr").textContent = shortAddr(data.providerAddress);
     $("wallet-state").textContent = data.walletConfigured
       ? "Configured: " + data.providerAddress
       : "No wallet configured yet.";
 
+    var b = data.balances || {};
+    $("stat-scrt").textContent = b.uscrt !== undefined ? fmt(b.uscrt) : "—";
+    $("stat-sscrt").textContent = b.sscrt !== undefined ? fmt(b.sscrt, "sSCRT") : "—";
+    $("stat-vault").textContent = data.vault ? fmt(data.vault.balance) : "—";
+    if (data.sales) {
+      $("stat-sold").textContent = fmt(data.sales.creditsSold);
+      $("stat-sold-sub").textContent = data.sales.sales +
+        (data.sales.sales === 1 ? " sale, " : " sales, ") + fmt(data.sales.sscrtReceived, "sSCRT") + " taken";
+    }
+
+    $("calib-summary").textContent = data.paymentGasConstant
+      ? "Currently " + data.paymentGasConstant + " gas per payment message"
+      : "Not calibrated — every quote is refused until it is";
+    $("calib-summary").style.color = data.paymentGasConstant ? "" : "var(--warn)";
+
     $("kv-chain").textContent = data.chainId;
     $("kv-lcd").textContent = data.lcdUrl || "—";
     $("kv-sscrt").textContent = shortAddr(data.sscrtContract);
+    $("kv-vault").textContent = data.gasVaultAddress
+      ? shortAddr(data.gasVaultAddress)
+      : "not set — credits cannot be sold";
+    $("kv-price").textContent = data.creditsForSale
+      ? fmt(data.creditsForSale.creditsUscrt) + " for " +
+        fmt(data.creditsForSale.priceSscrt, "sSCRT") + " (" + data.creditsForSale.markupPercent + "%)"
+      : "—";
     $("kv-unwrap").textContent = data.config.autoUnwrap.enabled
-      ? "above " + fmtScrt(data.config.autoUnwrap.thresholdUscrt)
+      ? "above " + fmt(data.config.autoUnwrap.thresholdUscrt)
       : "disabled";
     $("kv-last-unwrap").textContent = data.lastAutoUnwrap
-      ? fmtScrt(data.lastAutoUnwrap.sscrtBalanceBefore) + " at " + data.lastAutoUnwrap.triggeredAt
+      ? fmt(data.lastAutoUnwrap.sscrtBalanceBefore, "sSCRT") + " at " + data.lastAutoUnwrap.triggeredAt
       : "never";
 
     if (data.settings) fillSettings(data.settings);
-    renderOutstanding();
+    renderOwed();
     renderPurge();
-
-    var incomplete = setupIncomplete();
-    $("setup-banner").classList.toggle("hidden", !incomplete);
-    if (incomplete) {
-      $("setup-banner-text").textContent = !data.walletConfigured
-        ? "No provider wallet yet — the server cannot sponsor anything."
-        : "Payment gas is not calibrated, so every quote is refused.";
-    }
-
-    if (incomplete && !wizardDismissed && !wizardOpen) openWizard();
-    else applyWizardState();
-
+    renderSetup(data);
     renderJob(data.job);
 
     $("footer").textContent = "updated " + new Date().toLocaleTimeString();
     $("footer").className = "muted";
   }
 
+  var inFlight = 0;
   function refresh() {
-    // A /status sent before signing in can land after it — each one takes a few chain queries, so
-    // several are in flight at once — and rendering that stale "authenticated: false" throws the
-    // operator back to the login screen a moment after they got in. Responses that have been
-    // overtaken are dropped rather than rendered.
-    var seq = ++refreshSeq;
-    return fetch("/status", { headers: authHeaders() }).then(function (res) {
-      // Only an explicit 401 ends the session. Any other failure (rate limit, a blip, the endpoint
-      // hiccuping) leaves the token alone — treating those as "logged out" is what previously
-      // locked the operator out mid-job with no way back in.
-      if (!res.ok && res.status !== 401) throw new Error("HTTP " + res.status);
-      return res.json().then(function (data) {
-        if (seq !== refreshSeq) return;
-        if (res.status === 401) setToken(null);
-        render(data);
+    // A /status sent before signing in can land after one sent afterwards -- each takes a few
+    // chain queries and several are in flight at once. Rendering the stale "not authenticated"
+    // would throw the session away, so only the newest answer is allowed to render.
+    var mine = ++inFlight;
+    return api("/status")
+      .then(function (data) { if (mine === inFlight) render(data); })
+      .catch(function (err) {
+        if (mine !== inFlight) return;
+        setMsg($("footer"), err.message, "err");
       });
-    }).catch(function (err) {
-      if (seq !== refreshSeq) return;
-      $("footer").textContent = "failed to load /status: " + err.message;
-      $("footer").className = "err";
-    });
+  }
+
+  function setPolling(ms) {
+    if (pollMs === ms && pollTimer) return;
+    pollMs = ms;
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(refresh, ms);
   }
 
   refresh();

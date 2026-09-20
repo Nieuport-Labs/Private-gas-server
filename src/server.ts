@@ -39,22 +39,7 @@ import type { Permit } from "secretjs";
 const publicDir = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
 const dashboardHtml = readFileSync(join(publicDir, "index.html"), "utf-8");
 
-// The dashboard's only other asset: the Keplr helper bundled by `npm run build:web`. Read lazily
-// and tolerantly, because a deployment that skipped the bundle step should still serve a working
-// dashboard — only the wizard's optional "fund via Keplr" step depends on it.
-let depositBundle: string | null | undefined;
-function getDepositBundle(): string | null {
-  if (depositBundle === undefined) {
-    try {
-      depositBundle = readFileSync(join(publicDir, "vendor", "secret-deposit.js"), "utf-8");
-    } catch {
-      depositBundle = null;
-    }
-  }
-  return depositBundle;
-}
-
-/** Pricing for /status, which must render even when the operator has priced credits badly. */
+/** Pricing for /status, which has to render even when the operator has priced credits badly. */
 function safeDefaultPurchase() {
   try {
     return defaultPurchase();
@@ -164,18 +149,6 @@ export function buildServer() {
 
   app.get("/", async (_req, reply) => reply.type("text/html").send(dashboardHtml));
 
-  app.get("/vendor/secret-deposit.js", async (_req, reply) => {
-    const bundle = getDepositBundle();
-    if (bundle === null) {
-      return reply.status(404).send({ error: "not_built", message: "run `npm run build:web`" });
-    }
-    return reply.type("application/javascript").header("Cache-Control", "public, max-age=3600").send(bundle);
-  });
-
-  // Public: a dApp client needs the fee markup to show a user what a sponsored transaction will
-  // cost, and the provider address to build the payment leg. The provider's own balances and
-  // operational history are not part of that, so they are only included for a logged-in operator
-  // — the dashboard gets them from the same endpoint once it has a session.
   app.get("/status", async (req, reply) => {
     // The IP limiter exists to stop anonymous callers making this server do chain queries for
     // free. A signed-in operator is not that: their dashboard polls every 2s while a maintenance

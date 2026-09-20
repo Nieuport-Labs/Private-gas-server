@@ -5,8 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc -p . && npm run build:web",
-    "build:web": "esbuild browser/deposit-entry.ts --bundle --format=esm --platform=browser --target=es2022 --minify --outfile=public/vendor/secret-deposit.js",
+    "build": "tsc -p .",
     "start": "node dist/index.js",
     "smoke:permit": "tsx src/scripts/smoke-permit.ts",
     "smoke:onboard": "tsx src/scripts/smoke-onboard.ts",
@@ -28,7 +27,6 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^20.14.10",
-    "esbuild": "^0.23.0",
     "tsx": "^4.16.2",
     "typescript": "^5.5.4"
   }

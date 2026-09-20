@@ -15,8 +15,6 @@ export type Settings = {
   feeMarkupPercent: number;
   autoUnwrapEnabled: boolean;
   autoUnwrapThresholdUscrt: string;
-  grantSpendLimitUscrt: string;
-  grantExpirySeconds: number;
   /** Ceiling for the first, single-transaction grant an address gets before it has paid anything.
    * This is the most a never-paying address can cost the provider in sponsored gas. */
   bootstrapGrantUscrt: string;
@@ -44,8 +42,6 @@ export function getSettings(): Settings {
     feeMarkupPercent: raw("fee_markup_percent"),
     autoUnwrapEnabled: raw("auto_unwrap_enabled"),
     autoUnwrapThresholdUscrt: raw("auto_unwrap_threshold_uscrt"),
-    grantSpendLimitUscrt: raw("grant_spend_limit_uscrt"),
-    grantExpirySeconds: raw("grant_expiry_seconds"),
     bootstrapGrantUscrt: raw("bootstrap_grant_uscrt"),
     bootstrapGrantExpirySeconds: raw("bootstrap_grant_expiry_seconds"),
     gasVaultAddress: raw("gas_vault_address"),
@@ -56,8 +52,6 @@ export function getSettings(): Settings {
     feeMarkupPercent: stored.feeMarkupPercent !== null ? Number(stored.feeMarkupPercent) : config.feeMarkupPercent,
     autoUnwrapEnabled: stored.autoUnwrapEnabled !== null ? stored.autoUnwrapEnabled === "true" : config.autoUnwrapEnabled,
     autoUnwrapThresholdUscrt: stored.autoUnwrapThresholdUscrt ?? config.autoUnwrapThresholdUscrt,
-    grantSpendLimitUscrt: stored.grantSpendLimitUscrt ?? config.grantSpendLimitUscrt,
-    grantExpirySeconds: stored.grantExpirySeconds !== null ? Number(stored.grantExpirySeconds) : config.grantExpirySeconds,
     bootstrapGrantUscrt: stored.bootstrapGrantUscrt ?? config.bootstrapGrantUscrt,
     bootstrapGrantExpirySeconds:
       stored.bootstrapGrantExpirySeconds !== null
@@ -107,20 +101,12 @@ export function updateSettings(patch: Partial<Settings>): Settings {
     }
     writes.push(["credit_purchase_uscrt", v]);
   }
-  if (patch.grantSpendLimitUscrt !== undefined) {
-    const v = String(patch.grantSpendLimitUscrt);
-    if (!/^\d+$/.test(v) || v === "0") throw new SettingsError("grantSpendLimitUscrt must be a positive whole number of uscrt");
-    writes.push(["grant_spend_limit_uscrt", v]);
-  }
   if (patch.bootstrapGrantUscrt !== undefined) {
     const v = String(patch.bootstrapGrantUscrt);
     if (!/^\d+$/.test(v) || v === "0") {
       throw new SettingsError("bootstrapGrantUscrt must be a positive whole number of uscrt");
     }
-    // It has to cover one real transaction or no first quote can ever be signed, and it should
-    // stay well under the full limit, because it is what an address gets before paying anything.
-    const full = BigInt(patch.grantSpendLimitUscrt !== undefined ? String(patch.grantSpendLimitUscrt) : getSettings().grantSpendLimitUscrt);
-    if (BigInt(v) > full) throw new SettingsError("bootstrapGrantUscrt cannot exceed the full grant spend limit");
+    // It has to cover one real transaction, or no purchase can ever be signed.
     writes.push(["bootstrap_grant_uscrt", v]);
   }
   if (patch.bootstrapGrantExpirySeconds !== undefined) {
@@ -129,11 +115,6 @@ export function updateSettings(patch: Partial<Settings>): Settings {
       throw new SettingsError("bootstrapGrantExpirySeconds must be a positive whole number of seconds");
     }
     writes.push(["bootstrap_grant_expiry_seconds", String(v)]);
-  }
-  if (patch.grantExpirySeconds !== undefined) {
-    const v = Number(patch.grantExpirySeconds);
-    if (!Number.isInteger(v) || v <= 0) throw new SettingsError("grantExpirySeconds must be a positive whole number of seconds");
-    writes.push(["grant_expiry_seconds", String(v)]);
   }
 
   db.transaction(() => {

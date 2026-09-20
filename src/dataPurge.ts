@@ -18,7 +18,16 @@
 // Two operations, deliberately distinct. `purgeLegacyData` is the one-off clear-out, run once
 // against an existing database. `pruneExpired` is the ongoing retention that keeps the new design
 // from accumulating the same thing again.
-import { db } from "./db.js";
+import { db, tableExists } from "./db.js";
+
+/**
+ * Tables an earlier design created and this one does not.
+ *
+ * A database that never held them is the normal case now, so every read and delete has to
+ * tolerate their absence rather than throw. They are still named here because the ones that do
+ * exist are the most sensitive rows on the server.
+ */
+const LEGACY_TABLES = ["tx_outcomes", "deposits"] as const;
 
 export interface PurgeCounts {
   permits: number;
@@ -30,20 +39,25 @@ export interface PurgeCounts {
   settings: number;
 }
 
+/** Counts a table that may not exist. Absent is zero, not an error. */
+function countIfPresent(table: string, where = ""): number {
+  if (!tableExists(table)) return 0;
+  return (db.prepare(`SELECT COUNT(*) AS n FROM ${table} ${where}`).get() as { n: number }).n;
+}
+
 /** What a purge would delete, so the operator sees it before pressing the button. */
 export function describeLegacyData(): PurgeCounts {
-  const count = (sql: string): number => (db.prepare(sql).get() as { n: number }).n;
   return {
-    permits: count(`SELECT COUNT(*) AS n FROM permits`),
-    quotes: count(`SELECT COUNT(*) AS n FROM quotes`),
-    txOutcomes: count(`SELECT COUNT(*) AS n FROM tx_outcomes`),
-    deposits: count(`SELECT COUNT(*) AS n FROM deposits`),
-    grants: count(`SELECT COUNT(*) AS n FROM grants WHERE expires_at < datetime('now') OR stage = 'full'`),
-    contractCalibrations: count(
-      `SELECT COUNT(*) AS n FROM calibration WHERE key != 'sscrt_payment_transfer'`,
-    ),
-    settings: count(
-      `SELECT COUNT(*) AS n FROM settings WHERE key IN ('allowed_contract_addresses', 'security_deposit_uscrt')`,
+    permits: countIfPresent("permits"),
+    quotes: countIfPresent("quotes"),
+    txOutcomes: countIfPresent("tx_outcomes"),
+    deposits: countIfPresent("deposits"),
+    grants: countIfPresent("grants", `WHERE expires_at < datetime('now')`),
+    contractCalibrations: countIfPresent("calibration", `WHERE key != 'sscrt_payment_transfer'`),
+    settings: countIfPresent(
+      "settings",
+      `WHERE key IN ('allowed_contract_addresses', 'security_deposit_uscrt',
+                     'grant_spend_limit_uscrt', 'grant_expiry_seconds')`,
     ),
   };
 }
@@ -66,16 +80,19 @@ export function purgeLegacyData(): { deleted: PurgeCounts; vacuumed: boolean } {
         WHERE address NOT IN (SELECT address FROM credit_purchases WHERE state != 'delivered')`,
     ).run();
     db.prepare(`DELETE FROM quotes`).run();
-    db.prepare(`DELETE FROM tx_outcomes`).run();
-    db.prepare(`DELETE FROM deposits`).run();
-    // Full-stage grants belonged to the old two-stage scheme and are not issued any more;
-    // expired ones are dead on chain too. A live bootstrap grant stays -- an address mid-purchase
-    // is using it right now.
-    db.prepare(`DELETE FROM grants WHERE stage = 'full' OR expires_at < datetime('now')`).run();
+    // Expired grants are dead on chain too. A live one stays: an address mid-purchase is using
+    // it right now.
+    db.prepare(`DELETE FROM grants WHERE expires_at < datetime('now')`).run();
     db.prepare(`DELETE FROM calibration WHERE key != 'sscrt_payment_transfer'`).run();
     db.prepare(
-      `DELETE FROM settings WHERE key IN ('allowed_contract_addresses', 'security_deposit_uscrt')`,
+      `DELETE FROM settings WHERE key IN ('allowed_contract_addresses', 'security_deposit_uscrt',
+                                          'grant_spend_limit_uscrt', 'grant_expiry_seconds')`,
     ).run();
+    // Tables this design never creates. Dropped outright rather than emptied — an empty table
+    // nobody writes to is a standing question about what used to be in it.
+    for (const table of LEGACY_TABLES) {
+      if (tableExists(table)) db.exec(`DROP TABLE ${table}`);
+    }
   })();
 
   // Without this the rows are unlinked but their pages stay in the file, readable by anyone who

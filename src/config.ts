@@ -76,8 +76,6 @@ export const config = {
       (process.env.NODE_ENV === "production" ? required("NATIVE_GAS_PRICE_USCRT") : 0.25),
   ),
 
-  // Grant scoping (plan: "Bezpečnost" — never an unrestricted grant).
-  grantSpendLimitUscrt: process.env.GRANT_SPEND_LIMIT_USCRT ?? "1000000",
 
   // The gas-vault contract that issues gas credits, defaulted per chain to a deployment that has
   // actually been queried — not to one address for every network. SCRT paid into the wrong
@@ -99,7 +97,6 @@ export const config = {
   // left to expire rather than revoked, because revoking costs another transaction to reclaim an
   // amount smaller than the transaction. A short expiry is what makes that cheap.
   bootstrapGrantExpirySeconds: Number(process.env.BOOTSTRAP_GRANT_EXPIRY_SECONDS ?? 900), // 15 min
-  grantExpirySeconds: Number(process.env.GRANT_EXPIRY_SECONDS ?? 60 * 60 * 24 * 30), // 30 days
   allowedMessageTypes: (
     process.env.ALLOWED_MESSAGE_TYPES ??
     [
