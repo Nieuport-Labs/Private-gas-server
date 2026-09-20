@@ -18,11 +18,11 @@ import {
 import { getSettings, updateSettings, SettingsError } from "./settings.js";
 import { login, logout, logoutAll, issueSession, isValidSession, tokenFromHeader, sweepSessions } from "./auth.js";
 import { isSetUp, setup, changePassword, PasswordTooShortError } from "./secretStore.js";
-import { wrapScrt, calibratePaymentGas } from "./maintenance.js";
+import { wrapScrt, calibratePaymentGas, calibrateContractGas } from "./maintenance.js";
 import { startJob, getJob, isJobRunning, JobInProgressError } from "./jobs.js";
 import { getGasConstant } from "./gasCalibration.js";
-import { onboardUser } from "./onboarding.js";
-import { requestQuote, QuoteError } from "./quote.js";
+import { onboardUser, OnboardError } from "./onboarding.js";
+import { requestQuote, requestDepositQuote, QuoteError } from "./quote.js";
 import { submitQuote, SubmitError } from "./submit.js";
 import { decodeMessages, MessageDecodeError, type WireMessage } from "./messageRegistry.js";
 import { RateLimiter } from "./rateLimit.js";
@@ -33,7 +33,23 @@ import type { Permit } from "secretjs";
 // public/ sits next to both src/ and dist/ at the package root, so resolving relative to this
 // module's own location works the same under tsx (src/server.ts) and the compiled build
 // (dist/server.js) — no dependency on the process's cwd.
-const dashboardHtml = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "public", "index.html"), "utf-8");
+const publicDir = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
+const dashboardHtml = readFileSync(join(publicDir, "index.html"), "utf-8");
+
+// The dashboard's only other asset: the Keplr helper bundled by `npm run build:web`. Read lazily
+// and tolerantly, because a deployment that skipped the bundle step should still serve a working
+// dashboard — only the wizard's optional "fund via Keplr" step depends on it.
+let depositBundle: string | null | undefined;
+function getDepositBundle(): string | null {
+  if (depositBundle === undefined) {
+    try {
+      depositBundle = readFileSync(join(publicDir, "vendor", "secret-deposit.js"), "utf-8");
+    } catch {
+      depositBundle = null;
+    }
+  }
+  return depositBundle;
+}
 
 function getQuoteAddress(quoteId: string): string | null {
   const row = db.prepare(`SELECT address FROM quotes WHERE quote_id = ?`).get(quoteId) as
@@ -51,6 +67,8 @@ const QUOTE_ERROR_STATUS: Record<QuoteError["code"], number> = {
   simulate_failed: 422,
   contract_not_allowed: 403,
   contract_gas_not_calibrated: 422,
+  deposit_required: 402,
+  deposit_already_funded: 409,
 };
 
 const SUBMIT_ERROR_STATUS: Record<SubmitError["code"], number> = {
@@ -60,6 +78,10 @@ const SUBMIT_ERROR_STATUS: Record<SubmitError["code"], number> = {
   sequence_changed: 409,
   insufficient_balance: 402,
   native_action_would_fail: 422,
+  signed_tx_mismatch: 400,
+  // Transient and entirely the endpoint's doing: nothing was spent, and the same request will
+  // usually work on a retry.
+  not_broadcast: 503,
 };
 
 // Two independent rate limiters shared by /quote and /submit (plan: "per adresa/IP na obou
@@ -95,6 +117,25 @@ export function buildServer() {
     done(null, payload);
   });
 
+  // Allowing the origin is not enough on its own. A POST carrying a JSON body is not a "simple"
+  // request, so the browser sends a preflight OPTIONS first — and Fastify has no route for one,
+  // so it answered 404 with no Access-Control-Allow-Headers. The browser then refuses to send the
+  // POST at all, and the page sees a bare "Failed to fetch" with no status to explain it. GET
+  // /status worked throughout, because a plain GET needs no preflight — which is exactly what
+  // made this look like the server being unreachable rather than a missing header.
+  //
+  // /admin/* is excluded for the same reason it is excluded above: no browser on another origin
+  // has any business calling it.
+  app.addHook("onRequest", async (req, reply) => {
+    if (req.method !== "OPTIONS" || req.url.startsWith("/admin")) return;
+    return reply
+      .header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+      .header("Access-Control-Allow-Headers", "content-type")
+      .header("Access-Control-Max-Age", "86400")
+      .status(204)
+      .send();
+  });
+
   // Rejects every /admin/* request without a valid session, before any handler runs.
   app.addHook("onRequest", async (req, reply) => {
     if (!req.url.startsWith("/admin") || req.url === "/admin/login") return;
@@ -113,6 +154,14 @@ export function buildServer() {
   }));
 
   app.get("/", async (_req, reply) => reply.type("text/html").send(dashboardHtml));
+
+  app.get("/vendor/secret-deposit.js", async (_req, reply) => {
+    const bundle = getDepositBundle();
+    if (bundle === null) {
+      return reply.status(404).send({ error: "not_built", message: "run `npm run build:web`" });
+    }
+    return reply.type("application/javascript").header("Cache-Control", "public, max-age=3600").send(bundle);
+  });
 
   // Public: a dApp client needs the fee markup to show a user what a sponsored transaction will
   // cost, and the provider address to build the payment leg. The provider's own balances and
@@ -137,6 +186,11 @@ export function buildServer() {
       walletConfigured,
       chainId: config.chainId,
       sscrtContract: config.sscrtContract,
+      // The dashboard's Keplr step signs and broadcasts from the browser, so it needs an endpoint
+      // of its own. Serving the one the server already uses keeps the two from disagreeing about
+      // balances. It is a public URL either way, so this discloses nothing.
+      lcdUrl: config.lcdUrl,
+      nativeGasPriceUscrt: config.nativeGasPriceUscrt,
       config: {
         feeMarkupPercent: settings.feeMarkupPercent,
         autoUnwrap: {
@@ -157,6 +211,18 @@ export function buildServer() {
     } catch {
       // Not calibrated yet — the dashboard shows this as an action the operator still has to take.
     }
+
+    // A whitelisted contract with no constant is quoted as contract_gas_not_calibrated, which the
+    // operator otherwise only discovers when a user's transaction is refused. Listing the two
+    // together makes the missing half visible at the point where the whitelist is edited.
+    const contractGasConstants: Record<string, number | null> = {};
+    for (const address of settings.allowedContractAddresses) {
+      try {
+        contractGasConstants[address] = getGasConstant(address);
+      } catch {
+        contractGasConstants[address] = null;
+      }
+    }
     return reply.send({
       ...publicPart,
       authenticated: true,
@@ -166,6 +232,12 @@ export function buildServer() {
       balances: walletConfigured ? await getProviderBalancesCached(isJobRunning() ? Infinity : undefined) : null,
       settings,
       paymentGasConstant,
+      contractGasConstants,
+      // Aggregate only: how much failure cover the provider is holding across all addresses, and
+      // for how many. Per-address figures are the user's business, not the dashboard's.
+      deposits: db
+        .prepare(`SELECT COUNT(*) AS addresses, COALESCE(SUM(CAST(remaining_uscrt AS INTEGER)), 0) AS remaining FROM deposits`)
+        .get() as { addresses: number; remaining: number },
       job: getJob(),
       lastAutoUnwrap: lastAutoUnwrap && {
         txHash: lastAutoUnwrap.tx_hash,
@@ -273,6 +345,52 @@ export function buildServer() {
     }
   });
 
+  // The whitelist and the gas constant it needs are two halves of one setup step, and until now
+  // only the first half had a control — the second lived in a CLI script, which meant an operator
+  // could whitelist a contract from the dashboard and then be told by /quote to go and find a
+  // terminal.
+  app.post<{ Body: { contractAddress?: string; execMsg?: unknown; samples?: number } }>(
+    "/admin/calibrate-contract",
+    async (req, reply) => {
+      const contractAddress = String(req.body?.contractAddress ?? "").trim();
+      const { execMsg } = req.body ?? {};
+      const samples = Number(req.body?.samples ?? 5);
+
+      if (!contractAddress) {
+        return reply.status(400).send({ error: "bad_request", message: "contractAddress is required" });
+      }
+      // Calibrating something the provider will not quote anyway spends real gas for nothing, so
+      // the whitelist is checked here rather than left to fail later.
+      if (!getSettings().allowedContractAddresses.includes(contractAddress)) {
+        return reply.status(400).send({
+          error: "contract_not_allowed",
+          message: `${contractAddress} is not on the whitelist — add it in Settings first`,
+        });
+      }
+      if (!execMsg || typeof execMsg !== "object" || Array.isArray(execMsg)) {
+        return reply
+          .status(400)
+          .send({ error: "bad_request", message: "execMsg must be a JSON object, e.g. {\"transfer\":{…}}" });
+      }
+      if (!Number.isInteger(samples) || samples < 1 || samples > 50) {
+        return reply
+          .status(400)
+          .send({ error: "bad_request", message: "samples must be a whole number between 1 and 50" });
+      }
+
+      try {
+        return reply.send({
+          job: startJob("calibrate-contract", (onProgress) =>
+            calibrateContractGas(contractAddress, execMsg as object, samples, onProgress),
+          ),
+        });
+      } catch (err) {
+        if (err instanceof JobInProgressError) return reply.status(409).send({ error: err.code, message: err.message });
+        throw err;
+      }
+    },
+  );
+
   app.post<{ Body: Record<string, unknown> }>("/admin/settings", async (req, reply) => {
     try {
       return reply.send({ settings: updateSettings(req.body as never) });
@@ -294,11 +412,39 @@ export function buildServer() {
       const result = await onboardUser(address, permit);
       return reply.send(result);
     } catch (err: any) {
+      // The address cannot cover the one-off fee. 402 rather than 400: nothing about the request
+      // is malformed, there is simply not enough money behind it.
+      if (err instanceof OnboardError) {
+        return reply.status(402).send({ error: err.code, message: err.message });
+      }
       if (err instanceof WalletNotConfiguredError) {
         return reply.status(503).send({ error: err.code, message: err.message });
       }
       req.log.error(err);
       return reply.status(500).send({ error: "onboard_failed", message: err.message });
+    }
+  });
+
+  // The security deposit, quoted as a transaction of its own. It has to be one: bundled with a
+  // user's action it would revert together with it, and an address could then fail transactions
+  // indefinitely without ever funding the cover those failures are charged to.
+  app.post<{ Body: { address: string; pubkeyBase64?: string } }>("/deposit", async (req, reply) => {
+    const { address, pubkeyBase64 } = req.body ?? ({} as any);
+    if (!address) return reply.status(400).send({ error: "bad_request", message: "address is required" });
+    const rateLimited = checkRateLimit(req.ip, address);
+    if (rateLimited) return reply.status(429).send({ error: "rate_limited", message: rateLimited });
+
+    try {
+      return reply.send(await requestDepositQuote({ address, pubkeyBase64 }));
+    } catch (err) {
+      if (err instanceof QuoteError) {
+        return reply.status(QUOTE_ERROR_STATUS[err.code] ?? 400).send({ error: err.code, message: err.message });
+      }
+      if (err instanceof WalletNotConfiguredError) {
+        return reply.status(503).send({ error: err.code, message: err.message });
+      }
+      req.log.error(err);
+      return reply.status(500).send({ error: "deposit_quote_failed", message: (err as Error).message });
     }
   });
 

@@ -35,11 +35,17 @@ User (Keplr)                          Provider server                     Secret
 
 Three endpoints carry this:
 
-- **`POST /onboard`** — grants the user a scoped, expiring [`AllowedMsgAllowance`](https://docs.cosmos.network/main/build/modules/feegrant#msggrantallowance),
-  limited to specific message types and a spend cap. Also registers the user's SNIP-24 permit,
-  which the server needs to read their (private) sSCRT balance before issuing a quote.
+- **`POST /onboard`** — registers the user's SNIP-24 permit, which is what lets the server read
+  their (private) sSCRT balance. It reads that balance straight away and refuses an address that
+  could not cover the one-off onboarding fee. **It issues no grant and sends no transaction**, so
+  it costs the provider nothing and is safe to call repeatedly — the chain work it used to do
+  moved into the first quote, where it is paid for. Being onboarded therefore means the server
+  holds a permit, not that a grant exists.
 - **`POST /quote`** — checks grant coverage and balance, estimates gas, and returns an unsigned
-  `SignDoc` for the user's wallet to sign. Quotes are short-lived (`QUOTE_TTL_SECONDS`) and must
+  `SignDoc` for the user's wallet to sign. On an address's **first** quote it also issues the
+  [`AllowedMsgAllowance`](https://docs.cosmos.network/main/build/modules/feegrant#msggrantallowance)
+  — scoped to specific message types, capped, and initially covering a single transaction — and
+  adds the onboarding fee to that quote's payment. Quotes are short-lived (`QUOTE_TTL_SECONDS`) and must
   be re-issued once expired, since the sequence number or balance they were built against can go
   stale.
 - **`POST /submit`** — accepts the signed transaction bytes, re-verifies the sequence number and
@@ -103,17 +109,27 @@ self-hosted (ZimaOS + Tailscale Funnel) path that needs no VPS or open router po
 
 ## Dashboard and admin access
 
-`GET /` serves a dashboard that shows the provider's balances and lets the operator manage the
-wallet and tune settings at runtime. On a fresh install it runs first-run setup, where the
-operator chooses the admin password in the browser — no password in the container config. The
-public API
-(`/onboard`, `/quote`, `/submit`) and the client-facing part of `/status` are not, since dApp
-users cannot hold the admin password.
+`GET /` serves a dashboard that shows the provider's balances and lets the operator run every
+maintenance task and tune every setting at runtime, without a shell. The public API (`/onboard`,
+`/quote`, `/submit`) and the client-facing part of `/status` stay open, since dApp users cannot
+hold the admin password.
 
+On a fresh install it opens a **setup wizard** covering the whole bring-up in order — admin
+password, wallet, basic settings, funding, wrapping, gas calibration. It resumes at the first
+unfinished step, so a half-done install picks up where it stopped rather than starting over.
+
+- **Password**: chosen in the browser on first run, never in the container config, and
+  changeable later. Because it protects a data key rather than the seed directly, changing it
+  re-wraps that key and leaves the wallet untouched.
 - **Wallet**: generate a new provider wallet or import one from a seed phrase. A generated seed
-  is displayed exactly once and is never readable back through any endpoint.
-- **Password**: changeable from the dashboard. Because the password protects a data key rather
-  than the seed directly, changing it re-wraps that key and leaves the wallet untouched.
+  is displayed exactly once, behind an explicit acknowledgement, and is never readable back
+  through any endpoint.
+- **Funding**: connects the operator's own Keplr and builds a native SCRT transfer to the
+  provider. Keplr shows the destination and amount and asks for approval — the browser signs it,
+  the server never sees a key. The helper is bundled and served from this origin rather than a
+  CDN, because the same page displays a freshly generated seed phrase.
+- **Maintenance**: wrapping SCRT into sSCRT and running gas calibration, both with a live log,
+  one job at a time (concurrent broadcasts from one account race on the sequence number).
 - **Settings**: fee markup, auto-unwrap (on/off and threshold), per-user grant spend limit and
   expiry, and the sponsored-contract whitelist — all editable without a restart.
 
@@ -152,9 +168,13 @@ in the dashboard, the database is the source of truth.
 ## Development
 
 ```bash
-npm run build        # tsc -p .
-npx tsc --noEmit      # typecheck only
+npm run build        # tsc -p .  +  npm run build:web
+npm run build:web    # bundles browser/deposit-entry.ts -> public/vendor/ (esbuild)
+npx tsc --noEmit     # typecheck only
 ```
+
+`public/vendor/` is generated, not committed; the Docker build produces it. `public/index.html`
+is read once at startup, so a dashboard change needs a restart, not just a reload.
 
 `src/scripts/` holds smoke tests and calibration scripts, each runnable directly with `npm run
 <script-name>` (see `package.json`). They exercise the full onboard → quote → submit loop against

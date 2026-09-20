@@ -217,19 +217,28 @@ Check it's set to start on boot along with Docker itself:
 sudo systemctl is-enabled docker   # should already be "enabled" on ZimaOS
 ```
 
-## 6. Create the provider wallet, then fund it
+## 6. Run the setup wizard
 
-Open the dashboard. On a fresh install it shows **first-run setup**: choose an admin password
-(12+ characters, from a password manager — there is no reset) and you are signed straight in.
-That password gates the dashboard and protects the seed; you can change it later from the
-dashboard without touching the wallet.
+Open the dashboard. On a fresh install it opens a **setup wizard** that walks the whole
+bring-up in order — password, wallet, settings, funding, wrapping, calibration — and resumes at
+the first unfinished step if you close it or come back later. Steps 6 to 8 of this guide are the
+same work; the wizard is the supported way to do it, and the `docker exec` commands below are
+the fallback when you would rather not use a browser.
+
+**Step 1 — admin password.** Choose one (12+ characters, from a password manager — there is no
+reset) and you are signed straight in. That password gates the dashboard and protects the seed;
+you can change it later from the settings dialog without touching the wallet.
 
 Until a wallet exists the server answers `/onboard`, `/quote` and `/submit` with
 `503 wallet_not_configured` — it runs, but sponsors nothing.
 
-**Generate new wallet** creates one and shows you the seed phrase **once**. Write it down on
-paper or into a password manager before dismissing it: there is no endpoint that reads it back,
-by design. **Import from seed phrase** takes an existing wallet instead.
+**Step 2 — wallet.** *Generate new wallet* creates one and shows you the seed phrase **once**,
+behind a confirmation you have to tick. Write it down on paper or into a password manager before
+dismissing it: there is no endpoint that reads it back, by design. *Import instead* takes an
+existing seed phrase.
+
+**Step 3 — basic settings.** Fee markup, auto-unwrap threshold, and the per-user grant spend
+limit and expiry. All of them stay editable afterwards from the settings dialog.
 
 The seed is encrypted (AES-256-GCM) under a random data key, and that data key is kept two ways:
 wrapped with your password in the database, and as `.unlock.key` (mode 0600) in the data
@@ -242,8 +251,11 @@ because that is exactly what the server does at boot. Unattended restart and "no
 decrypt this" cannot both be true. Back up `provider.sqlite3`, and treat the data directory
 itself as secret.
 
-Then send real SCRT to the address the dashboard shows, **using your own wallet** — this
-assistant will not execute a transfer on your behalf. Size the initial amount for: (a) enough
+**Step 4 — funding.** *Deposit from Keplr* connects your own browser wallet and builds a plain
+native SCRT transfer to the provider address; **Keplr shows you the destination and amount and
+asks you to approve it**, and the signing happens there, not on the server. Sending from any
+other wallet works just as well — the balance on the step updates by itself. Either way the
+transfer is yours to approve; this assistant will not execute one on your behalf. Size the initial amount for: (a) enough
 native SCRT to cover grants for your expected early traffic, and (b) the plan's hot/cold split —
 keep only an operational reserve here (days to weeks of expected spend), with the bulk held
 separately and topped up periodically, not the whole treasury sitting on this server's key.
@@ -253,6 +265,9 @@ separately and topped up periodically, not the whole treasury sitting on this se
 Calibration (step 8) measures a real sSCRT transfer, so the provider needs some sSCRT to move.
 A fresh wallet holds only native SCRT, so wrap a small amount first — a couple of SCRT is plenty,
 the samples move fractions of one:
+
+The wizard's **step 5** does this (amount in uscrt, with a live log). The equivalent from a
+shell:
 
 ```bash
 docker exec -it <container> npm run wrap:scrt -- 2000000   # 2 SCRT, in uscrt
@@ -266,6 +281,9 @@ This is a bootstrap step only. In normal operation the provider receives sSCRT f
 The devnet's calibration numbers (in this repo's history, in smoke test output) are **not** valid
 for mainnet — gas costs can shift with chain version and contract state. Run for real, once,
 before taking any live traffic:
+
+The wizard's **step 6** does this, with the sample count and a live log. The equivalent from a
+shell:
 
 ```bash
 docker exec -it <container> npm run calibrate:payment
@@ -300,7 +318,8 @@ or, for the HTTP-layer ones, against the public Funnel URL from your own machine
 PROVIDER_URL=https://<machine-name>.<tailnet>.ts.net npm run smoke:http
 ```
 
-Confirm: onboarding creates a real grant, a quote for a small `MsgSend` prices sensibly, submit
+Confirm: onboarding stores the permit and costs nothing, the first quote creates a real grant and
+adds the one-off onboarding fee to its payment, a quote for a small `MsgSend` prices sensibly, submit
 lands with `code 0`, and the provider is reimbursed the expected sSCRT amount — on mainnet, with
 real (small) money, before trusting it with anything larger.
 

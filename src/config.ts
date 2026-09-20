@@ -77,7 +77,19 @@ export const config = {
   ),
 
   // Grant scoping (plan: "Bezpečnost" — never an unrestricted grant).
-  grantSpendLimitUscrt: process.env.GRANT_SPEND_LIMIT_USCRT ?? "500000",
+  grantSpendLimitUscrt: process.env.GRANT_SPEND_LIMIT_USCRT ?? "1000000",
+
+  // A one-off, non-refundable security deposit collected inside an address's first sponsored
+  // transaction and topped back up inside later ones. It is never spent on ordinary usage — users
+  // keep paying per transaction — it exists only to absorb a transaction that fails, where the
+  // fee is taken in the ante handler and the payment reverts with everything else.
+  securityDepositUscrt: process.env.SECURITY_DEPOSIT_USCRT ?? "1000000", // 1 sSCRT
+
+  // The first grant an address gets, before it has paid anything: enough for exactly one
+  // sponsored transaction with headroom (a typical bundle costs ~26000 uscrt). This is the
+  // ceiling on what a never-paying address can take, so it is deliberately small — the full
+  // spend limit only arrives once the onboarding fee has landed.
+  bootstrapGrantUscrt: process.env.BOOTSTRAP_GRANT_USCRT ?? "60000",
   grantExpirySeconds: Number(process.env.GRANT_EXPIRY_SECONDS ?? 60 * 60 * 24 * 30), // 30 days
   allowedMessageTypes: (
     process.env.ALLOWED_MESSAGE_TYPES ??
@@ -90,6 +102,12 @@ export const config = {
       "/secret.compute.v1beta1.MsgExecuteContract",
     ].join(",")
   ).split(","),
+
+  // How long to wait for a submitted transaction to appear in a block. secretjs defaults to 60s,
+  // which a busy or slow endpoint overruns often enough to matter — and the error it raises reads
+  // like a failure when the transaction may simply be late. Raised here, with submit.ts checking
+  // the chain itself before giving up.
+  broadcastTimeoutMs: Number(process.env.BROADCAST_TIMEOUT_MS ?? 120_000),
 
   // Quote lifetime — short on purpose (plan: "Quote"). A stale quote must be re-issued, not
   // reused, because the sequence/balance it was built against may no longer hold.

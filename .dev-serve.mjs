@@ -6,9 +6,9 @@ Object.assign(process.env, {
   PROVIDER_MNEMONIC: "",
   DB_PATH: "./.dev/dev.sqlite3",
   CHAIN_ID: "secret-4",
-  LCD_URL: process.env.LCD_URL ?? "https://lcd.secret.mainnet.secret3.dev",
+  LCD_URL: process.env.LCD_URL ?? "https://secretnetwork-api.lavenderfive.com",
   SSCRT_CONTRACT: "secret1k0jntykt7e4g3y88ltc60czgjuqdy4c9e8fzek",
-  NATIVE_GAS_PRICE_USCRT: "0.025",
+  NATIVE_GAS_PRICE_USCRT: process.env.NATIVE_GAS_PRICE_USCRT ?? "0.1",
   PORT: "8790",
 });
 const { isSetUp, unlockWithKeyfile } = await import("./src/secretStore.ts");

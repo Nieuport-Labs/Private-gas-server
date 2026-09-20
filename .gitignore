@@ -7,3 +7,7 @@ data/
 # local test server (see .dev-serve.mjs) — never part of a deployment
 .dev/
 .dev-serve.log
+
+# generated browser bundle (npm run build:web)
+public/vendor/
+.dev-realkey-archived/

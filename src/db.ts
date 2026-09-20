@@ -82,3 +82,31 @@ CREATE TABLE IF NOT EXISTS settings (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 `);
+
+db.exec(`
+CREATE TABLE IF NOT EXISTS deposits (
+  address TEXT PRIMARY KEY,
+  remaining_uscrt TEXT NOT NULL,   -- how much failure this address can still absorb
+  total_paid_uscrt TEXT NOT NULL DEFAULT '0',
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+`);
+
+// Additive migrations. `CREATE TABLE IF NOT EXISTS` above leaves an existing database untouched,
+// so a new column has to be added explicitly — and idempotently, since this runs on every boot.
+// SQLite has no `ADD COLUMN IF NOT EXISTS`, and a duplicate column is the expected outcome on
+// every boot after the first, so that one error is swallowed and nothing else is.
+function addColumn(table: string, definition: string): void {
+  try {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${definition}`);
+  } catch (err) {
+    if (!/duplicate column name/i.test((err as Error).message)) throw err;
+  }
+}
+
+// Which half of the two-stage grant an address is on: `bootstrap` covers exactly its first
+// transaction, `full` is the real spend limit. Existing rows default to `full` with the fee
+// treated as collected — they were granted under the old rules and must not be billed
+// retroactively for something they were never told about.
+addColumn("grants", "stage TEXT NOT NULL DEFAULT 'full'");
+addColumn("grants", "fee_collected INTEGER NOT NULL DEFAULT 1");

@@ -18,6 +18,12 @@ export type Settings = {
   allowedContractAddresses: string[];
   grantSpendLimitUscrt: string;
   grantExpirySeconds: number;
+  /** Ceiling for the first, single-transaction grant an address gets before it has paid anything.
+   * This is the most a never-paying address can cost the provider in sponsored gas. */
+  bootstrapGrantUscrt: string;
+  /** One-off, non-refundable, collected in the first sponsored transaction and topped back up in
+   * later ones. Only ever drawn on when a transaction fails. */
+  securityDepositUscrt: string;
 };
 
 const readStmt = db.prepare(`SELECT value FROM settings WHERE key = ?`);
@@ -38,6 +44,8 @@ export function getSettings(): Settings {
     allowedContractAddresses: raw("allowed_contract_addresses"),
     grantSpendLimitUscrt: raw("grant_spend_limit_uscrt"),
     grantExpirySeconds: raw("grant_expiry_seconds"),
+    bootstrapGrantUscrt: raw("bootstrap_grant_uscrt"),
+    securityDepositUscrt: raw("security_deposit_uscrt"),
   };
 
   return {
@@ -50,6 +58,8 @@ export function getSettings(): Settings {
         : config.allowedContractAddresses,
     grantSpendLimitUscrt: stored.grantSpendLimitUscrt ?? config.grantSpendLimitUscrt,
     grantExpirySeconds: stored.grantExpirySeconds !== null ? Number(stored.grantExpirySeconds) : config.grantExpirySeconds,
+    bootstrapGrantUscrt: stored.bootstrapGrantUscrt ?? config.bootstrapGrantUscrt,
+    securityDepositUscrt: stored.securityDepositUscrt ?? config.securityDepositUscrt,
   };
 }
 
@@ -85,6 +95,24 @@ export function updateSettings(patch: Partial<Settings>): Settings {
     const v = String(patch.grantSpendLimitUscrt);
     if (!/^\d+$/.test(v) || v === "0") throw new SettingsError("grantSpendLimitUscrt must be a positive whole number of uscrt");
     writes.push(["grant_spend_limit_uscrt", v]);
+  }
+  if (patch.bootstrapGrantUscrt !== undefined) {
+    const v = String(patch.bootstrapGrantUscrt);
+    if (!/^\d+$/.test(v) || v === "0") {
+      throw new SettingsError("bootstrapGrantUscrt must be a positive whole number of uscrt");
+    }
+    // It has to cover one real transaction or no first quote can ever be signed, and it should
+    // stay well under the full limit, because it is what an address gets before paying anything.
+    const full = BigInt(patch.grantSpendLimitUscrt !== undefined ? String(patch.grantSpendLimitUscrt) : getSettings().grantSpendLimitUscrt);
+    if (BigInt(v) > full) throw new SettingsError("bootstrapGrantUscrt cannot exceed the full grant spend limit");
+    writes.push(["bootstrap_grant_uscrt", v]);
+  }
+  if (patch.securityDepositUscrt !== undefined) {
+    const v = String(patch.securityDepositUscrt);
+    if (!/^\d+$/.test(v) || v === "0") {
+      throw new SettingsError("securityDepositUscrt must be a positive whole number of uscrt");
+    }
+    writes.push(["security_deposit_uscrt", v]);
   }
   if (patch.grantExpirySeconds !== undefined) {
     const v = Number(patch.grantExpirySeconds);

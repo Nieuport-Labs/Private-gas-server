@@ -26,6 +26,16 @@ const SAMPLE_ATTEMPTS = 3;
 
 const SAMPLE_SPACING_MS = 2000;
 
+// ~37% above the highest figure ever measured for the payment message. Generous against drift,
+// far below the 200_000 this used to request.
+const PAYMENT_SAMPLE_GAS_LIMIT = 130_000;
+
+// Left deliberately wide. This one measures contracts nobody has measured yet — a DEX swap can
+// cost several times an SNIP-20 transfer — and a sample that dies on the limit wastes the fee
+// without producing a number. Once a contract has been calibrated, quotes for it are priced from
+// that measurement, so the width costs nothing beyond the calibration run itself.
+const CONTRACT_SAMPLE_GAS_LIMIT = 400_000;
+
 export type Progress = (message: string) => void;
 
 /**
@@ -121,7 +131,10 @@ export async function calibratePaymentGas(sampleCount: number, onProgress: Progr
       try {
         const msg = buildPaymentMessage(getProviderAddress(), String(1000 + i), codeHash);
         const tx = await getProviderClient().tx.broadcast([msg], {
-          gasLimit: 200_000,
+          // The payment message costs 94883-94887 gas across every sample ever taken here, a
+          // spread of four gas. The limit is charged in full whatever is used, so sizing it at
+          // 200_000 doubled the price of every calibration run for no protection.
+          gasLimit: PAYMENT_SAMPLE_GAS_LIMIT,
           gasPriceInFeeDenom: config.nativeGasPriceUscrt,
         });
         if (tx.code !== 0) {
@@ -144,7 +157,7 @@ export async function calibratePaymentGas(sampleCount: number, onProgress: Progr
 
   const required = Math.min(MIN_SUCCESSFUL_SAMPLES, sampleCount);
   if (samples.length < required) {
-    throw new Error(explainFailure(samples.length, sampleCount, required, failures, 200_000));
+    throw new Error(explainFailure(samples.length, sampleCount, required, failures, PAYMENT_SAMPLE_GAS_LIMIT));
   }
 
   const constant = recordPaymentGasCalibration(samples);
@@ -179,7 +192,7 @@ export async function calibrateContractGas(
               msg: execMsg,
             }),
           ],
-          { gasLimit: 400_000, gasPriceInFeeDenom: config.nativeGasPriceUscrt },
+          { gasLimit: CONTRACT_SAMPLE_GAS_LIMIT, gasPriceInFeeDenom: config.nativeGasPriceUscrt },
         );
         if (tx.code !== 0) {
           failures.push(new Error(`chain rejected the transaction (code ${tx.code}): ${tx.rawLog}`));
@@ -201,7 +214,7 @@ export async function calibrateContractGas(
 
   const requiredC = Math.min(MIN_SUCCESSFUL_SAMPLES, sampleCount);
   if (samples.length < requiredC) {
-    throw new Error(explainFailure(samples.length, sampleCount, requiredC, failures, 400_000));
+    throw new Error(explainFailure(samples.length, sampleCount, requiredC, failures, CONTRACT_SAMPLE_GAS_LIMIT));
   }
 
   const constant = recordGasCalibration(contractAddress, samples);
