@@ -26,7 +26,7 @@ import { config } from "./config.js";
 import { getProviderClient, getProviderAddress, readClient, getSscrtCodeHash } from "./chain.js";
 import { db } from "./db.js";
 import { getSettings } from "./settings.js";
-import { defaultPurchase } from "./creditSale.js";
+import { affordablePurchase, CreditSaleError } from "./creditSale.js";
 
 export class OnboardError extends Error {
   constructor(
@@ -86,15 +86,20 @@ function toProtoTimestamp(date: Date) {
  * provider pay for. The balance check is the point.
  */
 export async function onboardUser(address: string, permit: Permit): Promise<OnboardResult> {
-  const sale = defaultPurchase();
-  const balance = BigInt(await readBalanceWithPermit(permit));
+  const balance = await readBalanceWithPermit(permit);
 
-  if (balance < BigInt(sale.priceSscrt)) {
-    throw new OnboardError(
-      `sSCRT balance too low to buy gas credits: have ${balance}, need ${sale.priceSscrt} for ` +
-        `${sale.creditsUscrt} uscrt of credits`,
-      "insufficient_balance",
-    );
+  // Sized to what this wallet holds, not to a fixed figure it may not reach.
+  //
+  // Refusing anyone below the full purchase was a real hole in what this is for. Somebody who
+  // has only ever been paid privately in sSCRT would have had to go and buy more before they
+  // could transact — from an exchange, or from whoever paid them — and either is a public event
+  // linking two parties the encrypted transfer had just kept apart.
+  let sale;
+  try {
+    sale = affordablePurchase(balance);
+  } catch (err) {
+    if (err instanceof CreditSaleError) throw new OnboardError(err.message, "insufficient_balance");
+    throw err;
   }
 
   db.prepare(
@@ -106,7 +111,7 @@ export async function onboardUser(address: string, permit: Permit): Promise<Onbo
     address,
     creditPriceSscrt: sale.priceSscrt,
     creditsUscrt: sale.creditsUscrt,
-    sscrtBalance: balance.toString(),
+    sscrtBalance: balance,
     gasVaultAddress: getSettings().gasVaultAddress,
   };
 }
