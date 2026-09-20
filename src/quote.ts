@@ -23,7 +23,7 @@ import { getStoredGrant, getStoredPermit, issueBootstrapGrant } from "./onboardi
 import { getPaymentGasConstant, buildPaymentMessage, getServerEncryptionUtils } from "./payment.js";
 import { getSettings } from "./settings.js";
 import { priceRequestedCredits, CreditSaleError } from "./creditSale.js";
-import { GAS_BUY } from "./gasVault.js";
+import { GAS_BUY, queryRemaining } from "./gasVault.js";
 import type { QuotedTx } from "./txVerify.js";
 
 export class QuoteError extends Error {
@@ -142,12 +142,14 @@ export async function requestPurchaseQuote(req: PurchaseQuoteRequest): Promise<Q
     );
   }
 
-  // Nothing above this line has cost the provider anything, which is what keeps an address that
-  // never buys from being worth creating. A grant is also what creates the grantee's account, so
-  // it has to come before the account is read.
-  if (!getStoredGrant(req.address)) {
-    await issueBootstrapGrant(req.address, settings.bootstrapGrantUscrt);
-  }
+  // Who pays for this transaction, and the answer is usually "not the provider".
+  //
+  // A per-address allowance is the only way an address holding nothing can sign anything at all
+  // -- the fee is settled in the ante handler, so it comes from the signer's balance or from a
+  // granter, and Cosmos has no grant-to-everybody. But it is only needed by an address that
+  // genuinely cannot pay, and this used to issue one to anybody who asked. An address with gas
+  // credits already, or with native SCRT, was costing the provider a transaction for nothing.
+  const feeGranter = await chooseFeeGranter(req.address, BigInt(feeAmountUscrt), settings.bootstrapGrantUscrt);
 
   const account = await getAccount(req.address);
   const pubkeyBase64 = account.pubkeyBase64 ?? req.pubkeyBase64;
@@ -174,7 +176,7 @@ export async function requestPurchaseQuote(req: PurchaseQuoteRequest): Promise<Q
     messages: protoMessages,
     gasLimit,
     feeAmountUscrt,
-    feeGranter: getProviderAddress(),
+    feeGranter,
   };
 
   const quoteId = randomUUID();
@@ -195,7 +197,7 @@ export async function requestPurchaseQuote(req: PurchaseQuoteRequest): Promise<Q
       creditsUscrt: sale.creditsUscrt,
       gasLimit,
       feeAmountUscrt,
-      feeGranter: getProviderAddress(),
+      feeGranter,
     }),
     sale.priceSscrt,
     gasLimit,
@@ -208,7 +210,7 @@ export async function requestPurchaseQuote(req: PurchaseQuoteRequest): Promise<Q
     protoMessages,
     gasLimit,
     feeAmountUscrt,
-    feeGranter: getProviderAddress(),
+    feeGranter,
     sscrtPaymentAmount: sale.priceSscrt,
     creditsUscrt: sale.creditsUscrt,
     gasVaultAddress: settings.gasVaultAddress,
@@ -216,6 +218,46 @@ export async function requestPurchaseQuote(req: PurchaseQuoteRequest): Promise<Q
     sequence: account.sequence,
     expiresAt: expiresAt.toISOString(),
   };
+}
+
+/**
+ * Decide who pays the fee for the purchase, and issue an allowance only if nobody else can.
+ *
+ * Three answers, cheapest to the provider first:
+ *
+ *   the vault    — the address already has gas credits. Costs the provider nothing.
+ *   nobody       — the address holds native SCRT and pays its own way. Also nothing.
+ *   the provider — the genuine cold start, and the only case that spends its money.
+ *
+ * The last one is unavoidable, not a leftover: the fee is settled in the ante handler before any
+ * message runs, so it comes from the signer's own balance or from a granter named in the
+ * transaction, and `x/feegrant` has no grant-to-everybody. An address holding nothing therefore
+ * cannot sign anything until somebody grants to it by name. `Fee.payer` would be the other way
+ * round, but a payer who is not the signer has to sign too, and secretjs signs for one wallet.
+ *
+ * A grant is also what creates the grantee's account, which is why it has to happen before the
+ * account number and sequence are read.
+ */
+async function chooseFeeGranter(
+  address: string,
+  feeUscrt: bigint,
+  bootstrapGrantUscrt: string,
+): Promise<string> {
+  // A grant already on file is used whatever else is true: it was paid for, it expires on its
+  // own, and issuing a second one is what an address that never pays would be farming.
+  if (getStoredGrant(address)) return getProviderAddress();
+
+  const credits = await queryRemaining(address).catch(() => null);
+  if (credits !== null && BigInt(credits) >= feeUscrt) return getSettings().gasVaultAddress;
+
+  const native = await readClient.query.bank
+    .balance({ address, denom: "uscrt" })
+    .then((r) => BigInt(r.balance?.amount ?? "0"))
+    .catch(() => 0n);
+  if (native >= feeUscrt) return "";
+
+  await issueBootstrapGrant(address, bootstrapGrantUscrt);
+  return getProviderAddress();
 }
 
 /** How much credit a quote promised, read back at /submit. */
