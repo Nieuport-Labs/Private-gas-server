@@ -30,6 +30,10 @@
 // That is why this does not generate a throwaway. It derives two accounts from USER_MNEMONIC, it
 // prints what the run will cost before spending anything, and outside a devnet it refuses to
 // start until CONFIRM names the chain.
+//
+// The same two checks also run from the demo app's dev mode, as the "refill" and "refill boundary"
+// scenarios, with Keplr as the buyer and no provider key at all. That is the easier way to get
+// the answer; this exists for a devnet and for CI, where there is no browser.
 import { MsgExecuteContract, SecretNetworkClient, Wallet } from "secretjs";
 import { config } from "../config.js";
 import { getSscrtCodeHash, getProviderAddress, getProviderClient, readClient } from "../chain.js";
@@ -139,15 +143,10 @@ async function checkRefill(params: {
   });
   console.error(`buyer account ${params.hdAccountIndex}: ${address}`);
 
-  // The wallet must start with no native SCRT: holding any would let it pay its own fee, and the
-  // run would pass without proving anything about the grant.
+  // Not "must be empty" but "must not move": the redeem adds native SCRT and the vault message
+  // spends it, so a wallet that already holds some is fine. Requiring zero was an unnecessary
+  // constraint — that the grant paid is proved by the allowance falling, not by an empty wallet.
   const nativeBefore = (await readClient.query.bank.balance({ address, denom: "uscrt" })).balance?.amount ?? "0";
-  if (nativeBefore !== "0") {
-    throw new Error(
-      `account ${params.hdAccountIndex} holds ${nativeBefore} uscrt. It has to start empty, or the ` +
-        "refill can pay its own way and this measures nothing. Move it out and re-run.",
-    );
-  }
 
   const codeHash = await getSscrtCodeHash();
 
@@ -224,14 +223,14 @@ async function checkRefill(params: {
     );
   }
 
-  // The unwrap has to have left nothing behind. A leftover native balance would mean the second
-  // message did not spend what the first produced, and the refill would quietly be accumulating
-  // SCRT in wallets instead of credits in the vault.
-  const leftover = (await readClient.query.bank.balance({ address, denom: "uscrt" })).balance?.amount ?? "0";
-  if (leftover !== "0") {
+  // The unwrap must have left nothing behind. A native balance that moved would mean the second
+  // message did not spend exactly what the first produced, and the refill would quietly be
+  // accumulating SCRT in wallets instead of credits in the vault.
+  const nativeAfter = (await readClient.query.bank.balance({ address, denom: "uscrt" })).balance?.amount ?? "0";
+  if (nativeAfter !== nativeBefore) {
     throw new Error(
-      `FAILED (${params.label}): ${leftover} uscrt was left in the wallet — the vault message did ` +
-        "not spend everything the redeem produced.",
+      `FAILED (${params.label}): the native balance moved from ${nativeBefore} to ${nativeAfter} — ` +
+        "the vault message did not spend exactly what the redeem produced.",
     );
   }
 
