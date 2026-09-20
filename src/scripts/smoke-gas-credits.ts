@@ -19,7 +19,17 @@
 //      apart from "could not ask" and grant the fresh amount anyway.
 //
 // If either fails, the refill has to become two transactions and the floor has to be recomputed.
-// Finding that out here costs a devnet run; finding it out later costs somebody their gas.
+//
+// ---------------------------------------------------------------------------------------------
+// This spends real money on a real chain, and some of it does not come back.
+//
+// Credits paid into the vault can only ever leave as the grantee's gas -- there is no withdrawal.
+// So the buyer wallet must be one whose key you keep: whatever allowance is left when the run
+// finishes is still spendable by that wallet, and is dead money if the key is not.
+//
+// That is why this does not generate a throwaway. It derives two accounts from USER_MNEMONIC, it
+// prints what the run will cost before spending anything, and outside a devnet it refuses to
+// start until CONFIRM names the chain.
 import { MsgExecuteContract, SecretNetworkClient, Wallet } from "secretjs";
 import { config } from "../config.js";
 import { getSscrtCodeHash, getProviderAddress, getProviderClient, readClient } from "../chain.js";
@@ -28,21 +38,65 @@ import { getSettings } from "../settings.js";
 
 /** Redeem plus the vault's revoke-and-grant. Generous: this run is measuring, not economising. */
 const GAS_TOPUP = 700_000;
+/** The provider's own transfer that funds the buyer. */
+const GAS_FUND = 200_000;
+/** The provider's vault purchase, from gasVault.ts. */
+const GAS_VAULT_BUY = 400_000;
 
 async function main() {
   const vaultAddress = getSettings().gasVaultAddress;
   if (!vaultAddress) throw new Error("no gas vault configured — set GAS_VAULT_ADDRESS");
 
-  const feeUscrt = BigInt(Math.ceil(GAS_TOPUP * config.nativeGasPriceUscrt));
-  console.log(`one refill costs ${feeUscrt} uscrt at ${config.nativeGasPriceUscrt} uscrt/gas`);
+  const userMnemonic = process.env.USER_MNEMONIC;
+  if (!userMnemonic) {
+    throw new Error(
+      "USER_MNEMONIC is required: the buyer wallet has to be one whose key you keep, because " +
+        "credits left in the vault at the end are only spendable by it and are lost otherwise.",
+    );
+  }
+
+  const price = config.nativeGasPriceUscrt;
+  const feeUscrt = BigInt(Math.ceil(GAS_TOPUP * price));
+  const startingA = feeUscrt * 3n;
+  const startingB = feeUscrt;
+  const topUpAmount = feeUscrt * 4n;
+
+  const intoVault = startingA + startingB + topUpAmount * 2n;
+  const providerGas = BigInt(Math.ceil((GAS_FUND * 2 + GAS_VAULT_BUY * 2) * price));
+  const sscrtMoved = topUpAmount * 2n;
+  // Each refill burns one fee out of the seeded allowance; the rest stays as spendable credit.
+  const strandedUnlessSpent = intoVault - feeUscrt * 2n;
+
+  console.error(`chain:        ${config.chainId} at ${price} uscrt/gas`);
+  console.error(`vault:        ${vaultAddress}`);
+  console.error("");
+  console.error("what this run spends:");
+  console.error(`  ${fmt(sscrtMoved)} sSCRT  from the provider to the buyer wallet`);
+  console.error(`  ${fmt(intoVault)} SCRT   paid into the vault (${fmt(startingA + startingB)} by the provider, ${fmt(topUpAmount * 2n)} by the buyer)`);
+  console.error(`  ${fmt(providerGas)} SCRT   the provider's own gas`);
+  console.error("");
+  console.error(`  of that, ${fmt(strandedUnlessSpent)} SCRT ends up as gas credits held by the`);
+  console.error("  two buyer accounts. It cannot be withdrawn — it is only recoverable by");
+  console.error("  spending it as their gas, which needs USER_MNEMONIC.");
+  console.error("");
+
+  const devnet = config.chainId.startsWith("secretdev");
+  if (!devnet && process.env.CONFIRM !== config.chainId) {
+    throw new Error(
+      `refusing to spend real funds without confirmation — re-run with CONFIRM=${config.chainId}`,
+    );
+  }
 
   await checkRefill({
     label: "1+2: refill pays its own fee out of the credits it is topping up",
     vaultAddress,
     // Comfortably more than the fee, so the grant survives the ante handler and the vault's
     // revoke-and-grant operates on a live allowance.
-    startingCreditsUscrt: (feeUscrt * 3n).toString(),
+    startingCreditsUscrt: startingA.toString(),
+    topUpAmountUscrt: topUpAmount.toString(),
     feeUscrt,
+    mnemonic: userMnemonic,
+    hdAccountIndex: 0,
   });
 
   await checkRefill({
@@ -50,22 +104,32 @@ async function main() {
     vaultAddress,
     // Exactly the fee. After the ante handler there is nothing left, so x/feegrant removes the
     // grant and the vault has to grant afresh rather than read a remainder that is not there.
-    startingCreditsUscrt: feeUscrt.toString(),
+    startingCreditsUscrt: startingB.toString(),
+    topUpAmountUscrt: topUpAmount.toString(),
     feeUscrt,
+    mnemonic: userMnemonic,
+    hdAccountIndex: 1,
   });
 
-  console.log("\nOK: both assumptions hold. The refill can stay a single transaction.");
+  console.error("\nOK: both assumptions hold. The refill can stay a single transaction.");
+}
+
+function fmt(uscrt: bigint): string {
+  return (Number(uscrt) / 1e6).toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
 }
 
 async function checkRefill(params: {
   label: string;
   vaultAddress: string;
   startingCreditsUscrt: string;
+  topUpAmountUscrt: string;
   feeUscrt: bigint;
+  mnemonic: string;
+  hdAccountIndex: number;
 }): Promise<void> {
-  console.log(`\n--- ${params.label}`);
+  console.error(`\n--- ${params.label}`);
 
-  const wallet = new Wallet();
+  const wallet = new Wallet(params.mnemonic, { hdAccountIndex: params.hdAccountIndex });
   const address = wallet.address;
   const userClient = new SecretNetworkClient({
     url: config.lcdUrl,
@@ -73,29 +137,38 @@ async function checkRefill(params: {
     wallet,
     walletAddress: address,
   });
+  console.error(`buyer account ${params.hdAccountIndex}: ${address}`);
+
+  // The wallet must start with no native SCRT: holding any would let it pay its own fee, and the
+  // run would pass without proving anything about the grant.
+  const nativeBefore = (await readClient.query.bank.balance({ address, denom: "uscrt" })).balance?.amount ?? "0";
+  if (nativeBefore !== "0") {
+    throw new Error(
+      `account ${params.hdAccountIndex} holds ${nativeBefore} uscrt. It has to start empty, or the ` +
+        "refill can pay its own way and this measures nothing. Move it out and re-run.",
+    );
+  }
 
   const codeHash = await getSscrtCodeHash();
-  const topUpAmount = (params.feeUscrt * 4n).toString();
 
-  // sSCRT to unwrap, and no native SCRT at all -- native SCRT would let the wallet pay its own
-  // fee and the test would pass without proving anything about the grant.
-  await getProviderClient().tx.broadcast(
+  const funded = await getProviderClient().tx.broadcast(
     [
       new MsgExecuteContract({
         sender: getProviderAddress(),
         contract_address: config.sscrtContract,
         code_hash: codeHash,
-        msg: { transfer: { recipient: address, amount: topUpAmount } },
+        msg: { transfer: { recipient: address, amount: params.topUpAmountUscrt } },
       }),
     ],
-    { gasLimit: 200_000, gasPriceInFeeDenom: config.nativeGasPriceUscrt },
+    { gasLimit: GAS_FUND, gasPriceInFeeDenom: config.nativeGasPriceUscrt },
   );
+  if (funded.code !== 0) throw new Error(`setup failed: could not fund the buyer: ${funded.rawLog}`);
 
   const granted = await buyCreditsFor(address, params.startingCreditsUscrt);
   if (granted.code !== 0) throw new Error(`setup failed: could not seed credits: ${granted.rawLog}`);
 
   const before = await queryRemaining(address);
-  console.log(`seeded ${params.startingCreditsUscrt}, vault reports remaining: ${before}`);
+  console.error(`seeded ${params.startingCreditsUscrt}, vault reports remaining: ${before}`);
   if (before === null) throw new Error("FAILED: the vault could not read the allowance it just issued");
 
   const vaultCodeHash = (
@@ -108,14 +181,14 @@ async function checkRefill(params: {
         sender: address,
         contract_address: config.sscrtContract,
         code_hash: codeHash,
-        msg: { redeem: { amount: topUpAmount, denom: "uscrt" } },
+        msg: { redeem: { amount: params.topUpAmountUscrt, denom: "uscrt" } },
       }),
       new MsgExecuteContract({
         sender: address,
         contract_address: params.vaultAddress,
         code_hash: vaultCodeHash,
         msg: { grant: { grantee: address } },
-        sent_funds: [{ denom: "uscrt", amount: topUpAmount }],
+        sent_funds: [{ denom: "uscrt", amount: params.topUpAmountUscrt }],
       }),
     ],
     {
@@ -125,6 +198,8 @@ async function checkRefill(params: {
       feeGranter: params.vaultAddress,
     },
   );
+
+  console.error(`refill gas_used ${tx.gasUsed} of ${GAS_TOPUP} wanted`);
 
   if (tx.code !== 0) {
     throw new Error(
@@ -137,10 +212,10 @@ async function checkRefill(params: {
   if (after === null) throw new Error("FAILED: the vault could not read the allowance after the refill");
 
   // What the allowance should be: what was there, less the fee the ante handler took, plus what
-  // was just paid in. The boundary case lands at exactly `topUpAmount`, because the remainder was
+  // was just paid in. The boundary case lands at exactly the top-up, because the remainder was
   // zero and the grant was gone.
-  const expected = BigInt(before) - params.feeUscrt + BigInt(topUpAmount);
-  console.log(`after refill: ${after} (expected ${expected})`);
+  const expected = BigInt(before) - params.feeUscrt + BigInt(params.topUpAmountUscrt);
+  console.error(`after refill: ${after} (expected ${expected})`);
 
   if (BigInt(after) !== expected) {
     throw new Error(
@@ -150,7 +225,7 @@ async function checkRefill(params: {
   }
 
   // The unwrap has to have left nothing behind. A leftover native balance would mean the second
-  // message did not spend what the first produced, and the refill would be quietly accumulating
+  // message did not spend what the first produced, and the refill would quietly be accumulating
   // SCRT in wallets instead of credits in the vault.
   const leftover = (await readClient.query.bank.balance({ address, denom: "uscrt" })).balance?.amount ?? "0";
   if (leftover !== "0") {
@@ -160,7 +235,7 @@ async function checkRefill(params: {
     );
   }
 
-  console.log("passed");
+  console.error(`passed. ${address} now holds ${fmt(BigInt(after))} SCRT of gas credits — spendable, not lost.`);
 }
 
 main().catch((err) => {
