@@ -28,7 +28,7 @@ import { outstandingPurchases, deliverPending, requeuePurchase, closePurchase } 
 import { queryVaultStatus, GasVaultError } from "./gasVault.js";
 import { defaultPurchase, CreditSaleError } from "./creditSale.js";
 import { purgeLegacyData, describeLegacyData } from "./dataPurge.js";
-import { getAttestation, attestationAvailable } from "./attestation.js";
+import { getAttestation, attestationAvailable, attestationUnavailableReason } from "./attestation.js";
 import { RateLimiter } from "./rateLimit.js";
 import { getLastAutoUnwrap } from "./autoUnwrap.js";
 import { db } from "./db.js";
@@ -201,8 +201,12 @@ export function buildServer() {
       return reply.status(501).send({
         error: "no_attestation",
         message:
-          "this provider is not running in a confidential VM, so it cannot prove what it is " +
-          "running — treat anything it says about deleting your permit as a promise",
+          "this provider cannot prove what it is running — treat anything it says about " +
+          "deleting your permit as a promise",
+        // Why, in the operator's terms. Usually "not in a CVM", but it can also be a broken
+        // dependency or an unmounted socket inside a perfectly good one, and those two used to
+        // be indistinguishable from here.
+        reason: attestationUnavailableReason(),
       });
     }
     return reply.send(attestation);
@@ -240,6 +244,7 @@ export function buildServer() {
       // Whether /attestation will answer. A client that cares should still call it rather than
       // believe this flag, which is the server talking about itself.
       attestable: await attestationAvailable(),
+      attestationUnavailableReason: attestationUnavailableReason(),
       config: {
         feeMarkupPercent: settings.feeMarkupPercent,
         autoUnwrap: {

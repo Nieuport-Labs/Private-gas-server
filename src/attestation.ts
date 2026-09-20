@@ -41,10 +41,25 @@ export interface Attestation {
 let clientPromise: Promise<unknown> | null = null;
 
 /**
+ * Why the SDK could not be used, when it could not be.
+ *
+ * This exists because swallowing that reason cost a deployment. `@phala/dstack-sdk` declares
+ * `@noble/curves` as an *optional* peer dependency and then imports it statically, so npm never
+ * installs it and the import throws everywhere -- including inside a real CVM. A bare `catch {}`
+ * turned that into "not running in a confidential VM", which is the same answer a laptop gives,
+ * so it looked like correct behaviour right up until it was deployed on TDX hardware and said
+ * the same thing.
+ *
+ * A diagnostic that is indistinguishable from the healthy case is not a diagnostic.
+ */
+let unavailableReason: string | null = null;
+
+/**
  * The SDK is imported lazily and tolerantly.
  *
  * Most runs of this server are not in a CVM -- a laptop, a VPS, CI -- and none of them should
  * fail to boot because a confidential-computing SDK is missing or its socket is not there.
+ * Tolerantly, though, is not silently: whatever went wrong is kept and reported.
  */
 async function dstackClient(): Promise<{ info(): Promise<never>; getQuote(data: string): Promise<never> } | null> {
   if (!clientPromise) {
@@ -57,12 +72,24 @@ async function dstackClient(): Promise<{ info(): Promise<never>; getQuote(data: 
         // this path testable without a real TDX host.
         const endpoint = process.env.DSTACK_SIMULATOR_ENDPOINT;
         return new DstackClient(endpoint || DSTACK_SOCKET);
-      } catch {
+      } catch (err) {
+        unavailableReason = (err as Error)?.message ?? String(err);
         return null;
       }
     })();
   }
   return clientPromise as Promise<{ info(): Promise<never>; getQuote(data: string): Promise<never> } | null>;
+}
+
+/**
+ * Why attestation is unavailable, or null while it has not been attempted or is working.
+ *
+ * Reported on /status and in the 501 body. It names a missing package or an absent socket, which
+ * is an operator's problem and not a secret: the whole file is public and its hash is the app's
+ * identity.
+ */
+export function attestationUnavailableReason(): string | null {
+  return unavailableReason;
 }
 
 /** Whether this process can produce an attestation at all. */
@@ -71,8 +98,10 @@ export async function attestationAvailable(): Promise<boolean> {
   if (!client) return false;
   try {
     await client.info();
+    unavailableReason = null;
     return true;
-  } catch {
+  } catch (err) {
+    unavailableReason = `dstack guest agent unreachable at ${DSTACK_SOCKET}: ${(err as Error)?.message ?? String(err)}`;
     return false;
   }
 }
@@ -113,7 +142,8 @@ export async function getAttestation(nonce: string): Promise<Attestation | null>
       eventLog: q.event_log ?? null,
       nonce,
     };
-  } catch {
+  } catch (err) {
+    unavailableReason = `dstack quote request failed: ${(err as Error)?.message ?? String(err)}`;
     return null;
   }
 }
