@@ -8,7 +8,14 @@
 //
 // dataPurge.ts clears the old ones out of a database that predates this file.
 import Database from "better-sqlite3";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { config } from "./config.js";
+
+// A missing directory is not a reason to refuse to start. better-sqlite3 will create the file
+// but not the path to it, and in a container the path is usually a mount that exists -- until
+// somebody runs the image without one and gets a stack trace instead of a server.
+mkdirSync(dirname(config.dbPath), { recursive: true });
 
 export const db = new Database(config.dbPath);
 db.pragma("journal_mode = WAL");
